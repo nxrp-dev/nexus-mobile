@@ -55,13 +55,25 @@ This license gives you the full rights to customize the engine and distribute bu
 Note that Solar2D incorporates many libraries, both [third-party](sdk/dmg/Corona3rdPartyLicenses.txt) and made by Solar2D developers. They may have different licenses.
 
 
-## Contributing
+## Working on Nexus Mobile
 
-If you are willing to improve Solar2D by contributing code, fork this repository and create a pull request with desired improvements. The project uses [git submodules](https://git-scm.com/book/en/Git-Tools-Submodules), so to clone the whole source code tree run
+Clone this repository normally:
 
 ```sh
-git clone --recursive https://github.com/coronalabs/corona.git
+git clone https://github.com/nxrp-dev/nexus-mobile.git
 ```
+
+Dependencies are ordinary files tracked by Nexus Mobile, including MetalANGLE's
+nested dependencies. Commit their changes in this repository; no submodule
+initialization, separate dependency commits or upstream pushes are required.
+Upstream source revisions, authors and license provenance are recorded in the
+workspace [ATTRIBUTIONS.md](https://github.com/nxrp-dev/nexus/blob/main/ATTRIBUTIONS.md).
+Original dependency licenses and notices remain with their source.
+
+## Contributing upstream
+
+If you choose to contribute improvements to Solar2D upstream, fork its repository
+and create a pull request with the desired improvements.
 
 Due to the open source nature of Solar2D distribution, all contributors would have to sign a simple Contributor License Agreement (CLA) to ensure that their code can be part of Solar2D ecosystem. For more details see [CONTRIBUTING.md](CONTRIBUTING.md).
 

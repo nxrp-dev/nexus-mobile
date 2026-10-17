@@ -4,12 +4,12 @@ If you have not done it already you will need to clone the git repository
 
 ```
 cd ~
-git clone --recursive https://github.com/coronalabs/corona.git 
+git clone https://github.com/nxrp-dev/nexus-mobile.git
 ```
 
 Run the provided script to install required dependencies.
 ```
-cd ~/corona/platform/linux
+cd ~/nexus-mobile/platform/linux
 sudo sh ./setup_dev.sh  
 ```
 
@@ -18,7 +18,7 @@ For those who like IDE's the source has been setup for use with CodeLite it can 
 sudo apt-get install codelite -y
 ```
 
-If you have installed CodeLite the workspace file is named "Solar2D.workspace" and is located at ~/corona/platform/linux
+If you have installed CodeLite the workspace file is named "Solar2D.workspace" and is located at ~/nexus-mobile/platform/linux
 
 
 

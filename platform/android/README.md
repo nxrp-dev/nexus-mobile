@@ -2,9 +2,9 @@
 
 ## Setup
 
-To check out repository on proper branch use this command:
+Clone Nexus Mobile; its dependency sources are included:
 ```bash
-git clone --recurse-submodules -j8 https://github.com/coronalabs/corona.git
+git clone https://github.com/nxrp-dev/nexus-mobile.git
 ```
 
 To run and debug Solar2D for Android create directory `platform/test/assets2` and put your project there (`platform/test/assets2/main.lua` must exist).

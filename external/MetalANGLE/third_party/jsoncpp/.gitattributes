@@ -1,0 +1,3 @@
+# Preserve the original repository's byte-oriented default.
+# Do not inherit MetalANGLE's text normalization for vendored fixtures.
+* -text

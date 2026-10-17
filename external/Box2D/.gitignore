@@ -1,0 +1,54 @@
+
+# Backup files left behind by Emacs
+*~
+
+# Lock files used by Emacs
+# Notice that the "#" char is escaped
+.\#*
+
+# Temp files used by vim
+.*.swp
+
+# Hidden files used by the Finder in MacOS
+.DS_Store
+.Trashes
+.com.apple.timemachine.supported
+.fseventsd/*
+.TemporaryItems/*
+Desktop DB
+Desktop DF
+
+# Eclipse
+.metadata/*
+
+# Build files
+*/build/*
+*.pbxuser
+*.perspective*
+*.mode1
+*.mode1v3
+*.orig
+*.class
+*.apk
+*.ap_
+*.obj
+*.bak
+*.dex
+*.so
+*.ncb
+*.suo
+*.idb
+*.pdb
+*.ilk
+*.lu
+*._*
+contents.xcworkspacedata
+
+Debug
+Release
+*/PowerVRDebug/*
+*.aps
+*.o
+*.o.d
+*/corona-root.lnk
+*.user

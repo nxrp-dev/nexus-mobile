@@ -1,0 +1,36 @@
+
+---
+
+2013/6/10:
+
+	These files are from luasec:
+
+		src/config.h
+		src/context.c
+		src/context.h
+		src/ec.h
+		src/ssl.c
+		src/ssl.h
+		src/x509.c
+		src/x509.h
+
+
+	They SHOULDN'T be built by the luasocket project.
+
+	They SHOULD be built by the OpenSSL plugin project.
+
+	They're in the luasocket "src" directory because they
+	were originally written as supplements to luasocket.
+	We DON'T want to add them to the luasocket project
+	because the luasocket project is a dependency of "main".
+	Adding these files to luasocket would have the indirect
+	effect of adding OpenSSL as a dependency to "main",
+	which we don't want.
+
+---
+
+2013/4/18:
+
+	This repo contains luasocket v.2.0.2.
+
+---

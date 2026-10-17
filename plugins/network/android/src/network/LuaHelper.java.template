@@ -1,0 +1,37 @@
+//////////////////////////////////////////////////////////////////////////////
+//
+// This file is part of the Corona game engine.
+// For overview and more information on licensing please refer to README.md 
+// Home page: https://github.com/coronalabs/corona
+// Contact: support@coronalabs.com
+//
+//////////////////////////////////////////////////////////////////////////////
+
+package network;
+
+import com.naef.jnlua.LuaState;
+
+public class LuaHelper 
+{
+	// No resources in plugins huh?  Fine, put that in your pipe and smoke it!
+	//
+	// build.sh substitutes the contents of the Lua helper file here
+	static private final String luaCode =
+${luaCode}
+
+	static public Boolean loadLuaHelper( LuaState luaState )
+	{
+		// Load our Lua helper support file 
+		//
+		NetworkRequest.debug("Loading Lua helper");
+		luaState.load(luaCode, "=simple"); 
+
+		// Evaluate the chunk, thus defining the function 
+		luaState.call(0, 0); // No arguments, no returns 
+		
+		NetworkRequest.debug("Lua helper module loaded");
+
+		return true;
+	}
+
+}
