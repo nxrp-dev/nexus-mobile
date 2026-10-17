@@ -6,7 +6,7 @@ AUTOMAKE_OPTIONS = foreign 1.11 dist-zip dist-xz
 SUBDIRS = m4 include vq lib test doc
 
 if BUILD_EXAMPLES 
-SUBDIRS += examples 
+# Examples are maintained in sibling nexus-lab/examples/audio/vorbis.
 endif 
 
 m4datadir = $(datadir)/aclocal

@@ -13586,7 +13586,7 @@ esac
 
 
 
-ac_config_files="$ac_config_files Makefile m4/Makefile lib/Makefile lib/modes/Makefile lib/books/Makefile lib/books/coupled/Makefile lib/books/uncoupled/Makefile lib/books/floor/Makefile doc/Makefile doc/vorbisfile/Makefile doc/vorbisenc/Makefile doc/libvorbis/Makefile doc/Doxyfile include/Makefile include/vorbis/Makefile examples/Makefile test/Makefile vq/Makefile libvorbis.spec vorbis.pc vorbisenc.pc vorbisfile.pc vorbis-uninstalled.pc vorbisenc-uninstalled.pc vorbisfile-uninstalled.pc"
+ac_config_files="$ac_config_files Makefile m4/Makefile lib/Makefile lib/modes/Makefile lib/books/Makefile lib/books/coupled/Makefile lib/books/uncoupled/Makefile lib/books/floor/Makefile doc/Makefile doc/vorbisfile/Makefile doc/vorbisenc/Makefile doc/libvorbis/Makefile doc/Doxyfile include/Makefile include/vorbis/Makefile test/Makefile vq/Makefile libvorbis.spec vorbis.pc vorbisenc.pc vorbisfile.pc vorbis-uninstalled.pc vorbisenc-uninstalled.pc vorbisfile-uninstalled.pc"
 
 ac_config_headers="$ac_config_headers config.h"
 
@@ -14634,7 +14634,6 @@ do
     "doc/Doxyfile") CONFIG_FILES="$CONFIG_FILES doc/Doxyfile" ;;
     "include/Makefile") CONFIG_FILES="$CONFIG_FILES include/Makefile" ;;
     "include/vorbis/Makefile") CONFIG_FILES="$CONFIG_FILES include/vorbis/Makefile" ;;
-    "examples/Makefile") CONFIG_FILES="$CONFIG_FILES examples/Makefile" ;;
     "test/Makefile") CONFIG_FILES="$CONFIG_FILES test/Makefile" ;;
     "vq/Makefile") CONFIG_FILES="$CONFIG_FILES vq/Makefile" ;;
     "libvorbis.spec") CONFIG_FILES="$CONFIG_FILES libvorbis.spec" ;;

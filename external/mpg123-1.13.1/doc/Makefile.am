@@ -22,10 +22,10 @@ EXTRA_DIST = \
 	doxyhead.xhtml \
 	doxy_examples.c \
 	doxygen.conf \
-	examples/mpg123_to_wav.c \
-	examples/scan.c \
-	examples/mpglib.c \
-	examples/id3dump.c \
-	examples/feedseek.c \
-	examples/dump_seekindex.c \
-	examples/Makefile
+	../../../../nexus-lab/examples/audio/mpg123/decoding/mpg123_to_wav.c \
+	../../../../nexus-lab/examples/audio/mpg123/decoding/scan.c \
+	../../../../nexus-lab/examples/audio/mpg123/decoding/mpglib.c \
+	../../../../nexus-lab/examples/audio/mpg123/decoding/id3dump.c \
+	../../../../nexus-lab/examples/audio/mpg123/decoding/feedseek.c \
+	../../../../nexus-lab/examples/audio/mpg123/decoding/dump_seekindex.c \
+	../../../../nexus-lab/examples/audio/mpg123/decoding/Makefile

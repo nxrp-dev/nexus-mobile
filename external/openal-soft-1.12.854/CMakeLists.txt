@@ -476,7 +476,7 @@ IF(ALSOFT_CONFIG)
 ENDIF()
 
 IF(EXAMPLES)
-    ADD_EXECUTABLE(openal-info examples/openal-info.c)
+    ADD_EXECUTABLE(openal-info ../../../nexus-lab/examples/audio/openal-legacy/openal-info.c)
     TARGET_LINK_LIBRARIES(openal-info ${LIBNAME})
     INSTALL(TARGETS openal-info
             RUNTIME DESTINATION bin

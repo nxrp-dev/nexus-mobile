@@ -3,14 +3,14 @@ Microsoft Visual Studio Solution File, Format Version 10.00
 # Visual Studio 2008
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mpg123clr", "mpg123clr\mpg123clr.vcproj", "{99E8B20E-9C29-46BC-B766-A50F237D88BF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "scanclr", "examples\scanclr\scanclr.csproj", "{53664927-0A21-4056-A5D5-C6A1B4B1F839}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "scanclr", "../../../../../../nexus-lab/examples/audio/mpg123/dotnet\scanclr\scanclr.csproj", "{53664927-0A21-4056-A5D5-C6A1B4B1F839}"
 	ProjectSection(ProjectDependencies) = postProject
 		{99E8B20E-9C29-46BC-B766-A50F237D88BF} = {99E8B20E-9C29-46BC-B766-A50F237D88BF}
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "feedseekclr", "examples\feedseekclr\feedseekclr.csproj", "{626B52AB-1E46-46FB-A259-03DCE3994BE6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "feedseekclr", "../../../../../../nexus-lab/examples/audio/mpg123/dotnet\feedseekclr\feedseekclr.csproj", "{626B52AB-1E46-46FB-A259-03DCE3994BE6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ReplaceReaderclr", "examples\ReplaceReaderclr\ReplaceReaderclr.csproj", "{6415FBC0-44EC-4158-8A24-127D9BAC5CEA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ReplaceReaderclr", "../../../../../../nexus-lab/examples/audio/mpg123/dotnet\ReplaceReaderclr\ReplaceReaderclr.csproj", "{6415FBC0-44EC-4158-8A24-127D9BAC5CEA}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libmpg123", "..\2008\libmpg123\libmpg123.vcproj", "{67CAA87B-7CF1-4F93-BB67-21C513F40803}"
 EndProject

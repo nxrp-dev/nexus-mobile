@@ -200,7 +200,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\examples\decoder_example.c" />
+    <ClCompile Include="..\..\..\..\..\..\..\nexus-lab\examples\audio\vorbis\decoder_example.c" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\libvorbis\libvorbis_dynamic.vcxproj">

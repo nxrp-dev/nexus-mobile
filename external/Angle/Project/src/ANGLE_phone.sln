@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 2012
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "esUtil_phone", "..\samples\gles2_book\Common\esUtil_phone.vcxproj", "{D2D857BF-346E-4014-B9CF-50D5E1F8A357}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "esUtil_phone", "..\..\..\..\..\nexus-lab\examples\graphics\angle\gles2_book\Common\esUtil_phone.vcxproj", "{D2D857BF-346E-4014-B9CF-50D5E1F8A357}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libEGL_phone", "libEGL\libEGL_phone.vcxproj", "{AB42A170-E370-4707-8CC6-1C51349C146F}"
 	ProjectSection(ProjectDependencies) = postProject

@@ -89,7 +89,7 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 target_triplet = @target@
-@BUILD_EXAMPLES_TRUE@am__append_1 = examples 
+@BUILD_EXAMPLES_TRUE@am__append_1 =
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/add_cflags.m4 \
@@ -192,7 +192,7 @@ am__define_uniq_tagged_files = \
 ETAGS = etags
 CTAGS = ctags
 CSCOPE = cscope
-DIST_SUBDIRS = m4 include vq lib test doc examples
+DIST_SUBDIRS = m4 include vq lib test doc
 am__DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/config.h.in \
 	$(srcdir)/libvorbis.spec.in $(srcdir)/vorbis-uninstalled.pc.in \
 	$(srcdir)/vorbis.pc.in $(srcdir)/vorbisenc-uninstalled.pc.in \

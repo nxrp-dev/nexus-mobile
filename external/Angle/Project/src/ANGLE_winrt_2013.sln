@@ -13,7 +13,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "translator_hlsl_winrt", "co
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "preprocessor_winrt", "compiler\preprocessor\preprocessor_winrt_2013.vcxproj", "{E7B1D854-AD49-4662-8326-24579123F471}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "esUtil_winrt", "..\samples\gles2_book\Common\esUtil_winrt_2013.vcxproj", "{44EEDAD2-D9AD-45DC-83B0-E5F50BD4377B}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "esUtil_winrt", "..\..\..\..\..\nexus-lab\examples\graphics\angle\gles2_book\Common\esUtil_winrt_2013.vcxproj", "{44EEDAD2-D9AD-45DC-83B0-E5F50BD4377B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

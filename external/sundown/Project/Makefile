@@ -48,10 +48,10 @@ libsundown.so.1: $(SUNDOWN_SRC)
 
 # executables
 
-sundown:	examples/sundown.o $(SUNDOWN_SRC)
+sundown:	../../../../nexus-lab/examples/text/markdown/sundown.o $(SUNDOWN_SRC)
 	$(CC) $(LDFLAGS) $^ -o $@
 
-smartypants: examples/smartypants.o $(SUNDOWN_SRC)
+smartypants: ../../../../nexus-lab/examples/text/markdown/smartypants.o $(SUNDOWN_SRC)
 	$(CC) $(LDFLAGS) $^ -o $@
 
 # perfect hashing
@@ -63,7 +63,7 @@ src/html_blocks.h: html_block_names.txt
 
 # housekeeping
 clean:
-	rm -f src/*.o html/*.o examples/*.o
+	rm -f src/*.o html/*.o ../../../../nexus-lab/examples/text/markdown/*.o
 	rm -f libsundown.so libsundown.so.1 sundown smartypants
 	rm -f sundown.exe smartypants.exe
 	rm -rf $(DEPDIR)
@@ -76,7 +76,7 @@ include $(wildcard $(DEPDIR)/*.d)
 
 # generic object compilations
 
-%.o:	src/%.c examples/%.c html/%.c
+%.o:	src/%.c ../../../../nexus-lab/examples/text/markdown/%.c html/%.c
 	@mkdir -p $(DEPDIR)
 	@$(CC) -MM $< > $(DEPDIR)/$*.d
 	$(CC) $(CFLAGS) -o $@ $<

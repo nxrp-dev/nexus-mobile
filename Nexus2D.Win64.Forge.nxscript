@@ -5,7 +5,7 @@ dialect "../nexus/projects/forge/language/Forge.nxscript";
 // This builds the existing Release|x64 simulator configuration. Nexus2D's
 // Win32 and x64 configurations still share platform/windows/Bin/Corona.
 PowerShell BuildDependencies {
-    Template: "../nexus/projects/forge/examples/PowerShell.mustache";
+    Template: "../nexus/projects/forge/templates/PowerShell.mustache";
     EntryPoint: "platform/windows/Build.Tools/Build-X64Dependencies.ps1";
     Arguments: [
         "-CMakePath", "../tools/solar2d-win64-deps/strawberry-perl-5.42.3.1/c/bin/cmake.exe",
@@ -15,7 +15,7 @@ PowerShell BuildDependencies {
 }
 
 MSBuild BuildSimulator {
-    Template: "../nexus/projects/forge/examples/MSBuild.mustache";
+    Template: "../nexus/projects/forge/templates/MSBuild.mustache";
     Executable: "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe";
     EntryPoint: "platform/windows/Corona.Simulator.sln";
     Configuration: Release;

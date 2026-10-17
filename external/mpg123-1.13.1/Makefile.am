@@ -23,8 +23,8 @@ EXTRA_DIST = \
 	ports/MSVC++/mpg123.h \
 	ports/MSVC++/config.h \
 	ports/MSVC++/msvc.c \
-	ports/MSVC++/examples/scan.c \
-	ports/MSVC++/examples/feedseek.c \
+	../../../nexus-lab/examples/audio/mpg123/windows/scan.c \
+	../../../nexus-lab/examples/audio/mpg123/windows/feedseek.c \
 	ports/MSVC++/2005/libmpg123/libmpg123.vcproj \
 	ports/MSVC++/2008/mpg123.sln \
 	ports/MSVC++/2008/feedseek/feedseek.vcproj \
@@ -57,15 +57,15 @@ EXTRA_DIST = \
 	ports/MSVC++/2008clr/mpg123clr/targetver.h \
 	ports/MSVC++/2008clr/mpg123clr/text.cpp \
 	ports/MSVC++/2008clr/mpg123clr/text.h \
-	ports/MSVC++/2008clr/examples/feedseekclr/feedseekclr.csproj \
-	ports/MSVC++/2008clr/examples/feedseekclr/Program.cs \
-	ports/MSVC++/2008clr/examples/feedseekclr/Properties/AssemblyInfo.cs \
-	ports/MSVC++/2008clr/examples/ReplaceReaderclr/ReplaceReaderclr.csproj \
-	ports/MSVC++/2008clr/examples/ReplaceReaderclr/Program.cs \
-	ports/MSVC++/2008clr/examples/ReplaceReaderclr/Properties/AssemblyInfo.cs \
-	ports/MSVC++/2008clr/examples/scanclr/scanclr.csproj \
-	ports/MSVC++/2008clr/examples/scanclr/Program.cs \
-	ports/MSVC++/2008clr/examples/scanclr/Properties/AssemblyInfo.cs \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/feedseekclr/feedseekclr.csproj \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/feedseekclr/Program.cs \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/feedseekclr/Properties/AssemblyInfo.cs \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/ReplaceReaderclr/ReplaceReaderclr.csproj \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/ReplaceReaderclr/Program.cs \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/ReplaceReaderclr/Properties/AssemblyInfo.cs \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/scanclr/scanclr.csproj \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/scanclr/Program.cs \
+	../../../nexus-lab/examples/audio/mpg123/dotnet/scanclr/Properties/AssemblyInfo.cs \
 	ports/MSVC++/CMP3Stream/libMPG123/libMPG123.vcproj \
 	ports/MSVC++/CMP3Stream/libMPG123/PLACE_LIBMPG123_SOURCES_HERE \
 	ports/MSVC++/CMP3Stream/README \
