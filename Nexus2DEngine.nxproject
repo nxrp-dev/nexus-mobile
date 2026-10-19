@@ -10,7 +10,7 @@ Project Nexus2DEngine TargetOS[linux] {
     Id: "NXRP.Nexus2D.Engine";
     RootDirectory: "../nexus";
     SourceRoot: "../nexus-mobile";
-    OutputRoot: @Tools.OutputRoot + "/nexus2d/" + @Tools.Native.Name;
+    OutputRoot: @Tools.OutputRoot + "/nexus2d/" + @Tools.Native.Name + "/" + $BuildConfiguration;
     Publishes Directories {
         Headers: [@Nexus2DEngine.SourceRoot + "/librtt/Corona", @Nexus2DEngine.SourceRoot + "/external/lua-5.1.3/src"];
         Libraries: [@Nexus2DEngine.OutputRoot];
