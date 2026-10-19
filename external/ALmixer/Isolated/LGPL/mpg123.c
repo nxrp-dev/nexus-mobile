@@ -77,9 +77,9 @@ static int MPG123_init(void);
 static void MPG123_quit(void);
 static int MPG123_open(Sound_Sample *sample, const char *ext);
 static void MPG123_close(Sound_Sample *sample);
-static Uint32 MPG123_read(Sound_Sample *sample);
+static size_t MPG123_read(Sound_Sample *sample);
 static int MPG123_rewind(Sound_Sample *sample);
-static int MPG123_seek(Sound_Sample *sample, Uint32 ms);
+static int MPG123_seek(Sound_Sample *sample, size_t ms);
 
 /* !!! FIXME: MPEG and MPG extensions? */
 static const char *extensions_mpg123[] = { "MP3", NULL };
@@ -109,10 +109,10 @@ static SDL_mutex *mpg123_mutex = NULL;
 static int mpg123_rwops_count = 0;
 static SDL_RWops **mpg123_rwops = NULL;
 
-static void print_decoders(const char *kind, char **decoders)
+static void print_decoders(const char *kind, const char **decoders)
 {
     SNDDBG(("%s:", kind));
-    if (*decoders == NULL)
+    if (decoders == NULL || *decoders == NULL)
 	{
         SNDDBG((" [none]"));
 	}
@@ -133,7 +133,7 @@ static int MPG123_init(void)
     assert(mpg123_mutex == NULL);
     if (mpg123_init() == MPG123_OK)
     {
-        char **supported = mpg123_supported_decoders();
+        const char **supported = mpg123_supported_decoders();
         print_decoders("ALL MPG123 DECODERS", mpg123_decoders());
         print_decoders("SUPPORTED MPG123 DECODERS", mpg123_supported_decoders());
         if ((supported != NULL) && (*supported != NULL))
@@ -142,6 +142,7 @@ static int MPG123_init(void)
             if (mpg123_mutex != NULL)
                 retval = 1;  /* at least one decoder available. */
         } /* if */
+        if (!retval) mpg123_exit();
     } /* if */
 
     return retval;
@@ -166,7 +167,11 @@ static ssize_t rwread(int fd, void *buf, size_t len)
     SDL_LockMutex(mpg123_mutex);
     rw = mpg123_rwops[fd];
     SDL_UnlockMutex(mpg123_mutex);
-    return (ssize_t) SDL_RWread(rw, buf, 1, len);
+    /* libmpg123 uses a signed byte count. */
+    const size_t limit = sizeof(ssize_t) == 8 ? (size_t)INT64_MAX : (size_t)INT32_MAX;
+    if (len > limit) len = limit;
+    size_t count = SDL_RWread(rw, buf, 1, len);
+    return count == (size_t)-1 ? -1 : (ssize_t)count;
 } /* rwread */
 
 
@@ -177,7 +182,8 @@ static off_t rwseek(int fd, off_t pos, int whence)
     SDL_LockMutex(mpg123_mutex);
     rw = mpg123_rwops[fd];
     SDL_UnlockMutex(mpg123_mutex);
-    return (off_t) SDL_RWseek(rw, pos, whence);
+    if (pos < LONG_MIN || pos > LONG_MAX) return -1;
+    return (off_t) SDL_RWseek(rw, (long)pos, whence);
 } /* rwseek */
 
 
@@ -243,10 +249,14 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
         ptr = mpg123_rwops;
     else
     {
-        mpg123_rwops_count++;
-        ptr = realloc(mpg123_rwops, sizeof (SDL_RWops *) * mpg123_rwops_count);
+        if (mpg123_rwops_count < INT_MAX &&
+            (size_t)mpg123_rwops_count < SIZE_MAX / sizeof(SDL_RWops *) - 1)
+            ptr = realloc(mpg123_rwops, sizeof(SDL_RWops *) * ((size_t)mpg123_rwops_count + 1));
         if (ptr != NULL)
+        {
             mpg123_rwops = (SDL_RWops **) ptr;
+            mpg123_rwops_count++;
+        }
     } /* else */
     if (ptr != NULL)
         mpg123_rwops[rwops] = internal->rw;
@@ -269,12 +279,19 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
     if (mpg123_seek(mp, 0, SEEK_END) >= 0)  /* can seek? */
     {
         len = mpg123_tell(mp);
-        if ((rc = (int) mpg123_seek(mp, 0, SEEK_SET)) < 0)
+        if (mpg123_seek(mp, 0, SEEK_SET) < 0)
+        {
+            rc = MPG123_ERR;
             goto mpg123_open_failed;
+        }
         seekable = 1;
     } /* if */
 
-    internal->decoder_private = mp;
+    if (rate <= 0 || (uint64_t)rate > UINT32_MAX || channels <= 0 || channels > UINT8_MAX)
+    {
+        rc = MPG123_BAD_OUTFORMAT;
+        goto mpg123_open_failed;
+    }
     sample->actual.rate = rate;
     sample->actual.channels = channels;
 
@@ -303,16 +320,21 @@ static int MPG123_open(Sound_Sample *sample, const char *ext)
     if (seekable)
     {
         sample->flags |= SOUND_SAMPLEFLAG_CANSEEK;
-        internal->total_time = ((len / rate) * 1000) +
-                               (((len % rate) * 1000) / rate);
+        if (len >= 0 && (uint64_t)(len / rate) <= (uint64_t)PTRDIFF_MAX / 1000)
+        {
+            uint64_t duration = (uint64_t)(len / rate) * 1000 +
+                                ((uint64_t)(len % rate) * 1000) / rate;
+            if (duration <= PTRDIFF_MAX) internal->total_time = (ptrdiff_t)duration;
+        }
     } /* if */
 
+    internal->decoder_private = mp;
     return(1); /* we'll handle this data. */
 
 mpg123_open_failed:
     SDL_LockMutex(mpg123_mutex);
     mpg123_rwops[rwops] = NULL;
-    if (rwops == mpg123_rwops_count)
+    if (rwops == mpg123_rwops_count - 1)
         mpg123_rwops_count--;
     SDL_UnlockMutex(mpg123_mutex);
     set_error(mp, rc);
@@ -347,7 +369,7 @@ static void MPG123_close(Sound_Sample *sample)
 } /* MPG123_close */
 
 
-static Uint32 MPG123_read(Sound_Sample *sample)
+static size_t MPG123_read(Sound_Sample *sample)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     mpg123_t *mp = ((mpg123_t *) internal->decoder_private);
@@ -362,7 +384,7 @@ static Uint32 MPG123_read(Sound_Sample *sample)
         set_error(mp, rc);
     } /* else if */
 
-    return((Uint32) bw);
+    return bw;
 } /* MPG123_read */
 
 
@@ -370,20 +392,22 @@ static int MPG123_rewind(Sound_Sample *sample)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     mpg123_t *mp = ((mpg123_t *) internal->decoder_private);
-    const int rc = (int) mpg123_seek(mp, 0, SEEK_SET);
-    BAIL_IF_MACRO(rc < 0, set_error(mp, rc), 0);
+    const off_t rc = mpg123_seek(mp, 0, SEEK_SET);
+    BAIL_IF_MACRO(rc < 0, set_error(mp, MPG123_ERR), 0);
     return(1);
 } /* MPG123_rewind */
 
 
-static int MPG123_seek(Sound_Sample *sample, Uint32 ms)
+static int MPG123_seek(Sound_Sample *sample, size_t ms)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     mpg123_t *mp = ((mpg123_t *) internal->decoder_private);
-    const float frames_per_ms = ((float) sample->actual.rate) / 1000.0f;
-    const off_t frame_offset = (off_t) (frames_per_ms * ((float) ms));
-    const int rc = (int) mpg123_seek(mp, frame_offset , SEEK_SET);
-    BAIL_IF_MACRO(rc < 0, set_error(mp, rc), 0);
+    uint64_t frame_offset;
+    uint64_t limit = sizeof(off_t) == 8 ? INT64_MAX : INT32_MAX;
+    BAIL_IF_MACRO(!SoundDecoder_MillisecondsToFrames(ms, sample->actual.rate, limit, &frame_offset),
+                  "MPG123: seek out of range", 0);
+    BAIL_IF_MACRO(mpg123_seek(mp, (off_t)frame_offset, SEEK_SET) < 0,
+                  set_error(mp, MPG123_ERR), 0);
     return(1);
 } /* MPG123_seek */
 

@@ -26,6 +26,10 @@
 #ifdef __APPLE__
 
 #include <stddef.h> /* NULL */
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <ctype.h>
 #include <stdio.h> /* printf */
 #include <al.h>
 #include <arpa/inet.h> /* htonl */
@@ -132,6 +136,7 @@ static void CoreAudio_quit(void)
 */
 static AudioFileTypeID CoreAudio_GetAudioTypeForExtension(const char* file_extension)
 {
+	if (file_extension == NULL) return 0;
 	if( (__Sound_strcasecmp(file_extension, "aif") == 0)
 		|| (__Sound_strcasecmp(file_extension, "aiff") == 0)
 		|| (__Sound_strcasecmp(file_extension, "aifc") == 0)
@@ -273,9 +278,10 @@ static const char* CoreAudio_FourCCToString(int32_t error_code)
 SInt64 CoreAudio_SizeCallback(void* inClientData)
 {
 	ALmixer_RWops* rw_ops = (ALmixer_RWops*)inClientData;
-	SInt64 current_position = ALmixer_RWtell(rw_ops);
-	SInt64 end_position = ALmixer_RWseek(rw_ops, 0, SEEK_END);
-	ALmixer_RWseek(rw_ops, current_position, SEEK_SET);
+	long current_position = ALmixer_RWtell(rw_ops);
+	if (current_position < 0) return -1;
+	long end_position = ALmixer_RWseek(rw_ops, 0, SEEK_END);
+	if (ALmixer_RWseek(rw_ops, current_position, SEEK_SET) != current_position) return -1;
 //	fprintf(stderr, "CoreAudio_SizeCallback:%d\n", end_position);
 
 	return end_position;
@@ -290,9 +296,13 @@ OSStatus CoreAudio_ReadCallback(
 )
 {
 	ALmixer_RWops* rw_ops = (ALmixer_RWops*)inClientData;
-	ALmixer_RWseek(rw_ops, inPosition, SEEK_SET);
+	*actualCount = 0;
+	if (inPosition < 0 || inPosition > LONG_MAX ||
+	    ALmixer_RWseek(rw_ops, (long)inPosition, SEEK_SET) != inPosition)
+		return kAudioFileUnspecifiedError;
 	size_t bytes_actually_read = ALmixer_RWread(rw_ops, data_buffer, 1, requestCount);
-	// Not sure how to test for a read error with ALmixer_RWops
+	if (bytes_actually_read == ALMIXER_RWOPS_ERROR || bytes_actually_read > requestCount)
+		return kAudioFileUnspecifiedError;
 //	fprintf(stderr, "CoreAudio_ReadCallback:%d, %d\n", requestCount, bytes_actually_read);
 
 	*actualCount = (UInt32) bytes_actually_read;
@@ -317,7 +327,11 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
 
 
 	audio_file_id = (AudioFileID*)malloc(sizeof(AudioFileID));
-	BAIL_IF_MACRO(audio_file_id == NULL, ERR_OUT_OF_MEMORY, 0);
+	if (audio_file_id == NULL)
+	{
+		free(core_audio_file_container);
+		BAIL_MACRO(ERR_OUT_OF_MEMORY, 0);
+	}
 
 	error_result = AudioFileOpenWithCallbacks(
 		internal->rw,
@@ -330,7 +344,6 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
 	);
 	if (error_result != noErr)
 	{
-		AudioFileClose(*audio_file_id);
 		free(audio_file_id);
 		free(core_audio_file_container);
 		SNDDBG(("Core Audio: can't grok data. reason: [%s].\n", CoreAudio_FourCCToString(error_result)));
@@ -372,7 +385,7 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
 
 	core_audio_file_container->audioFileID = audio_file_id;
 	
-	internal->decoder_private = core_audio_file_container;
+
 	
 	/* If the audio file contains more audio channels than OpenAL supports, then reduce the number of channels
 	 * to be decoded by CoreAudio to something that is supported. CoreAudio will downmix it for us in this case.
@@ -419,10 +432,22 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
     }
 #endif
     
+	if (!(actual_format.mSampleRate > 0) || actual_format.mSampleRate > UINT32_MAX ||
+	    actual_format.mChannelsPerFrame == 0 || actual_format.mChannelsPerFrame > UINT8_MAX ||
+	    (sample->desired.format != 0 && (sample->desired.format & 0xFF) != 8 &&
+	     (sample->desired.format & 0xFF) != 16))
+	{
+		AudioFileClose(*audio_file_id);
+		free(audio_file_id);
+		free(core_audio_file_container);
+		BAIL_MACRO("Core Audio: Unsupported PCM format", 0);
+	}
 	sample->flags = SOUND_SAMPLEFLAG_CANSEEK;
 	sample->actual.rate = (UInt32) actual_format.mSampleRate;
 	sample->actual.channels = (UInt8)actual_format.mChannelsPerFrame;
-	internal->total_time = (SInt32)(estimated_duration * 1000.0 + 0.5);
+	internal->total_time = (estimated_duration >= 0 &&
+	    estimated_duration * 1000.0 + 0.5 < (double)PTRDIFF_MAX) ?
+	    (ptrdiff_t)(estimated_duration * 1000.0 + 0.5) : -1;
 
 #if 0
 	/* FIXME: Both Core Audio and SDL 1.3 support float and 32-bit formats */
@@ -547,7 +572,7 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
 		output_format.mFormatFlags = 0; // clear flags
 		output_format.mFormatFlags |= kAudioFormatFlagIsPacked; // I seem to read failures problems without kAudioFormatFlagIsPacked. From a mailing list post, this seems to be a Core Audio bug.
 		// Mask against bitsize
-		if(0xFF & sample->desired.format)
+		if((sample->desired.format & 0xFF) == 16)
 		{
 			output_format.mBitsPerChannel = 16; /* 16-bit */
 		}
@@ -616,7 +641,14 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
 
 
 	core_audio_file_container->outputFormat = (AudioStreamBasicDescription*)malloc(sizeof(AudioStreamBasicDescription));
-	BAIL_IF_MACRO(core_audio_file_container->outputFormat == NULL, ERR_OUT_OF_MEMORY, 0);
+	if (core_audio_file_container->outputFormat == NULL)
+	{
+		ExtAudioFileDispose(core_audio_file_container->extAudioFileRef);
+		AudioFileClose(*audio_file_id);
+		free(audio_file_id);
+		free(core_audio_file_container);
+		BAIL_MACRO(ERR_OUT_OF_MEMORY, 0);
+	}
 
 
 	
@@ -627,6 +659,7 @@ static int CoreAudio_open(Sound_Sample *sample, const char *ext)
 
 	
 
+	internal->decoder_private = core_audio_file_container;
 	return(1);
 } /* CoreAudio_open */
 
@@ -647,109 +680,44 @@ static void CoreAudio_close(Sound_Sample *sample)
 
 static size_t CoreAudio_read(Sound_Sample *sample)
 {
-	OSStatus error_result = noErr;	
-	/* Documentation/example shows SInt64, but is problematic for big endian
-	 * on 32-bit cast for ExtAudioFileRead() because it takes the upper
-	 * bits which turn to 0.
-	 */
-	UInt32 buffer_size_in_frames = 0;
-	UInt32 buffer_size_in_frames_remaining = 0;
-	UInt32 total_frames_read = 0;
-	UInt32 data_buffer_size = 0;
-	UInt32 bytes_remaining = 0;
-	size_t total_bytes_read = 0;
-	Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
-	CoreAudioFileContainer* core_audio_file_container = (CoreAudioFileContainer *) internal->decoder_private;
-	UInt32 max_buffer_size = (UInt32) internal->buffer_size;
-
-//	printf("internal->buffer_size=%d, internal->buffer=0x%x, sample->buffer_size=%d\n", internal->buffer_size, internal->buffer, sample->buffer_size); 
-//	printf("internal->max_buffer_size=%d\n", max_buffer_size); 
-
-	/* Compute how many frames will fit into our max buffer size */
-	/* Warning: If this is not evenly divisible, the buffer will not be completely filled which violates the SDL_sound assumption. */
-	buffer_size_in_frames = max_buffer_size / core_audio_file_container->outputFormat->mBytesPerFrame;
-//	printf("buffer_size_in_frames=%ld, internal->buffer_size=%d, internal->buffer=0x%x outputFormat->mBytesPerFrame=%d, sample->buffer_size=%d\n", buffer_size_in_frames, internal->buffer_size, internal->buffer, core_audio_file_container->outputFormat->mBytesPerFrame, sample->buffer_size); 
-
-
-//	void* temp_buffer = malloc(max_buffer_size);
-	
-	AudioBufferList audio_buffer_list;
-	audio_buffer_list.mNumberBuffers = 1;
-	audio_buffer_list.mBuffers[0].mDataByteSize = max_buffer_size;
-	audio_buffer_list.mBuffers[0].mNumberChannels = core_audio_file_container->outputFormat->mChannelsPerFrame;
-	audio_buffer_list.mBuffers[0].mData = internal->buffer;
-
-
-	bytes_remaining = max_buffer_size;
-	buffer_size_in_frames_remaining = buffer_size_in_frames;
-	
-	// oops. Due to the kAudioFormatFlagIsPacked bug, 
-	// I was misled to believe that Core Audio
-	// was not always filling my entire requested buffer. 
-	// So this while-loop might be unnecessary.
-	// However, I have not exhaustively tested all formats, 
-	// so maybe it is possible this loop is useful.
-	// It might also handle the not-evenly disvisible case above.
-	while(buffer_size_in_frames_remaining > 0 && !(sample->flags & SOUND_SAMPLEFLAG_EOF))
-	{
-		
-		data_buffer_size = (UInt32)(buffer_size_in_frames * core_audio_file_container->outputFormat->mBytesPerFrame);
-//		printf("data_buffer_size=%d\n", data_buffer_size); 
-
-		buffer_size_in_frames = buffer_size_in_frames_remaining;
-		
-//		printf("reading buffer_size_in_frames=%"PRId64"\n", buffer_size_in_frames); 
-
-
-		audio_buffer_list.mBuffers[0].mDataByteSize = bytes_remaining;
-		audio_buffer_list.mBuffers[0].mData = &(((UInt8*)internal->buffer)[total_bytes_read]);
-
-		
-		/* Read the data into an AudioBufferList */
-		error_result = ExtAudioFileRead(core_audio_file_container->extAudioFileRef, &buffer_size_in_frames, &audio_buffer_list);
-		if(error_result == noErr)
-		{
-		
-		
-			/* Success */
-			
-			total_frames_read += buffer_size_in_frames;
-			buffer_size_in_frames_remaining = buffer_size_in_frames_remaining - buffer_size_in_frames;
-			
-//			printf("read buffer_size_in_frames=%"PRId64", buffer_size_in_frames_remaining=%"PRId64"\n", buffer_size_in_frames, buffer_size_in_frames_remaining); 
-
-			/* ExtAudioFileRead returns the number of frames actually read. Need to convert back to bytes. */
-			data_buffer_size = (UInt32)(buffer_size_in_frames * core_audio_file_container->outputFormat->mBytesPerFrame);
-//			printf("data_buffer_size=%d\n", data_buffer_size); 
-
-			total_bytes_read += data_buffer_size;
-			bytes_remaining = bytes_remaining - data_buffer_size;
-
-			/* Note: 0 == buffer_size_in_frames is a legitimate value meaning we are EOF. */
-			if(0 == buffer_size_in_frames)
-			{
-				sample->flags |= SOUND_SAMPLEFLAG_EOF;			
-			}
-
-		}
-		else 
-		{
-			SNDDBG(("Core Audio: ExtAudioFileReadfailed, reason: [%s].\n", CoreAudio_FourCCToString(error_result)));
-
-			sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-			break;
-			
-		}
-	}
-	
-	if( (!(sample->flags & SOUND_SAMPLEFLAG_EOF)) && (total_bytes_read < max_buffer_size))
-	{
-		SNDDBG(("Core Audio: ExtAudioFileReadfailed SOUND_SAMPLEFLAG_EAGAIN, reason: [total_bytes_read < max_buffer_size], %d, %d.\n", total_bytes_read , max_buffer_size));
-		
-		/* Don't know what to do here. */
-		sample->flags |= SOUND_SAMPLEFLAG_EAGAIN;
-	}
-	return total_bytes_read;
+    Sound_SampleInternal *internal = (Sound_SampleInternal *)sample->opaque;
+    CoreAudioFileContainer *container = (CoreAudioFileContainer *)internal->decoder_private;
+    UInt32 frame_size = container->outputFormat->mBytesPerFrame;
+    size_t total = 0;
+    if (frame_size == 0 || internal->buffer_size < frame_size)
+    {
+        sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+        BAIL_MACRO("Core Audio: buffer smaller than a PCM frame", 0);
+    }
+    while (internal->buffer_size - total >= frame_size)
+    {
+        size_t remaining = internal->buffer_size - total;
+        UInt32 bytes = remaining > UINT32_MAX ? UINT32_MAX : (UInt32)remaining;
+        UInt32 frames = bytes / frame_size;
+        UInt32 requested_frames = frames;
+        AudioBufferList buffers;
+        buffers.mNumberBuffers = 1;
+        buffers.mBuffers[0].mNumberChannels = container->outputFormat->mChannelsPerFrame;
+        buffers.mBuffers[0].mDataByteSize = frames * frame_size;
+        buffers.mBuffers[0].mData = (UInt8 *)internal->buffer + total;
+        OSStatus result = ExtAudioFileRead(container->extAudioFileRef, &frames, &buffers);
+        if (result != noErr || frames > requested_frames)
+        {
+            sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+            SoundDecoder_SetError("Core Audio: failed to read audio frames");
+            break;
+        }
+        if (frames == 0)
+        {
+            sample->flags |= SOUND_SAMPLEFLAG_EOF;
+            break;
+        }
+        total += (size_t)frames * frame_size;
+    }
+    if (total < internal->buffer_size &&
+        !(sample->flags & (SOUND_SAMPLEFLAG_EOF | SOUND_SAMPLEFLAG_ERROR)))
+        sample->flags |= SOUND_SAMPLEFLAG_EAGAIN;
+    return total;
 } /* CoreAudio_read */
 
 
@@ -762,7 +730,7 @@ static int CoreAudio_rewind(Sound_Sample *sample)
 	error_result = ExtAudioFileSeek(core_audio_file_container->extAudioFileRef, 0);
 	if(error_result != noErr)
 	{
-		sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+		BAIL_MACRO("Core Audio: rewind failed", 0);
 	}
 	return(1);
 } /* CoreAudio_rewind */
@@ -774,53 +742,15 @@ static int CoreAudio_rewind(Sound_Sample *sample)
  */
 static int CoreAudio_seek(Sound_Sample *sample, size_t ms)
 {
-	OSStatus error_result = noErr;	
-	Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
-	CoreAudioFileContainer* core_audio_file_container = (CoreAudioFileContainer *) internal->decoder_private;
-	SInt64 frame_offset = 0;
-
-	/* I'm confused. The Apple documentation says this:
-	 "Seek position is specified in the sample rate and frame count of the file’s audio data format
-	 — not your application’s audio data format."
-	 My interpretation is that I want to get the "actual format of the file and compute the frame offset.
-	 But when I try that, seeking goes to the wrong place.
-	 When I use outputFormat, things seem to work correctly.
-	 I must be misinterpreting the documentation or doing something wrong.
-	 */
-#if 0 /* not working */
-	AudioStreamBasicDescription	actual_format;
-	UInt32 format_size;
-    format_size = sizeof(AudioStreamBasicDescription);
-    error_result = AudioFileGetProperty(
-		*core_audio_file_container->audioFileID,
-		kAudioFilePropertyDataFormat,
-		&format_size,
-		&actual_format
-	);
-    if(error_result != noErr)
-	{
-		sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-		BAIL_MACRO("Core Audio: Could not GetProperty for kAudioFilePropertyDataFormat.", 0);
-	} /* if */
-
-	// packetIndex = (pos * sampleRate) / framesPerPacket
-	frame_offset = (SInt64)((ms/1000.0 * actual_format.mSampleRate) / actual_format.mFramesPerPacket);
-	// computed against actual format and not the client format
-
-	// packetIndex = (pos * sampleRate) / framesPerPacket
-	//	frame_offset = (SInt64)((ms/1000.0 * actual_format.mSampleRate) / actual_format.mFramesPerPacket);
-#else /* seems to work, but I'm confused */
-	// packetIndex = (pos * sampleRate) / framesPerPacket
-	frame_offset = (SInt64)((ms/1000.0 * core_audio_file_container->outputFormat->mSampleRate) / core_audio_file_container->outputFormat->mFramesPerPacket);	
-#endif
-	
-	// computed against actual format and not the client format
-	error_result = ExtAudioFileSeek(core_audio_file_container->extAudioFileRef, frame_offset);
-	if(error_result != noErr)
-	{
-		sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-	}
-	return(1);
+    Sound_SampleInternal *internal = (Sound_SampleInternal *)sample->opaque;
+    CoreAudioFileContainer *container = (CoreAudioFileContainer *)internal->decoder_private;
+    /* The output keeps the file's sample rate; PCM has one frame per packet. */
+    double frames = (ms / 1000.0) * container->outputFormat->mSampleRate;
+    BAIL_IF_MACRO(!(frames >= 0) || frames >= (double)INT64_MAX,
+                  "Core Audio: seek out of range", 0);
+    BAIL_IF_MACRO(ExtAudioFileSeek(container->extAudioFileRef, (SInt64)frames) != noErr,
+                  "Core Audio: seek failed", 0);
+    return 1;
 } /* CoreAudio_seek */
 
 #endif /* __APPLE__ */

@@ -272,6 +272,8 @@ PlatformOpenALPlayer::QuitOpenALPlayer()
 {
 	if(false == isInitialized)
 	{
+		// The runtime attaches its notifier before audio is initialized lazily.
+		AttachNotifier( NULL );
 		return;
 	}
 	

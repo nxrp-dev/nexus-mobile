@@ -2,6 +2,8 @@
 #define SOUNDDECODER_INTERNAL_H
 
 #include <stdio.h>
+#include <stdint.h>
+#include <limits.h>
 #include "al.h" /* OpenAL */
 #include "ALmixer_RWops.h"
 #include "SoundDecoder.h"
@@ -16,9 +18,13 @@ typedef struct SoundDecoder_DecoderFunctions
     const SoundDecoder_DecoderInfo info;
     int (*init)(void);
     void (*quit)(void);
+    /* Failed open releases decoder-owned allocations; the dispatcher owns rw. */
     int (*open)(SoundDecoder_Sample *sample, const char *ext);
     void (*close)(SoundDecoder_Sample *sample);
+    /* Valid bytes written (including partial data); never an unsigned error.
+       Set ERROR/EOF separately. A zero read without EOF cannot complete DecodeAll. */
     size_t (*read)(SoundDecoder_Sample *sample);
+    /* Rewind/seek: nonzero only on success; zero preserves failure. */
     int (*rewind)(SoundDecoder_Sample *sample);
     int (*seek)(SoundDecoder_Sample *sample, size_t ms);
 } SoundDecoder_DecoderFunctions;
@@ -71,6 +77,29 @@ int SoundDecoder_DebugPrint(const char* format, ...);
 
 void SoundDecoder_SetError(const char* err_str, ...);
 #define __Sound_SetError SoundDecoder_SetError
+
+/* Convert time without an intermediate float or overflowing multiplication. */
+static inline int SoundDecoder_MillisecondsToFrames(size_t ms, uint32_t rate,
+                                                    uint64_t limit, uint64_t *frames)
+{
+    uint64_t seconds = ms / 1000;
+    uint64_t fraction = ((uint64_t)(ms % 1000) * rate) / 1000;
+    if (rate == 0 || seconds > limit / rate)
+        return 0;
+    *frames = seconds * rate;
+    if (fraction > limit - *frames)
+        return 0;
+    *frames += fraction;
+    return 1;
+}
+
+/* Unknown or unrepresentable durations use the public API's -1 sentinel. */
+static inline ptrdiff_t SoundDecoder_DurationFrom100ns(int64_t ticks)
+{
+    if (ticks < 0) return -1;
+    uint64_t milliseconds = (uint64_t)ticks / 10000 + ((ticks % 10000) >= 5000);
+    return milliseconds <= PTRDIFF_MAX ? (ptrdiff_t)milliseconds : -1;
+}
 
 int SoundDecoder_strcasecmp(const char *x, const char *y);
 #define __Sound_strcasecmp SoundDecoder_strcasecmp

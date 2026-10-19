@@ -16,6 +16,7 @@
 #include "Rtt_LuaContext.h"
 #include "Core/Rtt_Types.h"
 #include "Rtt_LinuxContext.h"
+#include "Rtt_Freetype.h"
 #include "Rtt_LinuxPlatform.h"
 #include "Rtt_LinuxRuntimeDelegate.h"
 #include "Rtt_LuaFile.h"
@@ -61,6 +62,7 @@ namespace Rtt
 		: fRuntime(NULL)
 		, fRuntimeDelegate(new LinuxRuntimeDelegate())
 		, fPlatform(NULL)
+		, fGlyphProvider(NULL)
 		, fTouchDeviceExist(false)
 		, fMode("normal")
 		, fIsDebApp(false)
@@ -89,6 +91,7 @@ namespace Rtt
 		delete fProjectSettings;
 
 		setGlyphProvider(NULL);
+		delete fGlyphProvider;
 	}
 
 	void SolarAppContext::Init()
@@ -132,7 +135,8 @@ namespace Rtt
 			Rtt_MakeDirectory(cachesDir.c_str());
 		}
 
-		setGlyphProvider(new glyph_freetype_provider(fPathToApp.c_str()));
+		fGlyphProvider = new glyph_freetype_provider(fPathToApp.c_str());
+		setGlyphProvider(fGlyphProvider);
 		fPlatform = new LinuxPlatform(fPathToApp.c_str(), documentsDir.c_str(), temporaryDir.c_str(), cachesDir.c_str(), systemCachesDir.c_str(), skinDir.c_str(), GetStartupPath(NULL));
 		fRuntime = new LinuxRuntime(*fPlatform, NULL);
 		fRuntime->SetDelegate(fRuntimeDelegate);

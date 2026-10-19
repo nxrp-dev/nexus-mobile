@@ -259,6 +259,8 @@ void SoundDecoder_Quit()
     size_t i;	
 	if(0 == s_isInitialized)
 	{
+		TError_FreeErrorPool(s_errorPool);
+		s_errorPool = NULL;
 		return;
 	}
 
@@ -269,7 +271,7 @@ void SoundDecoder_Quit()
 	 */
 	while(LinkedList_Size(s_listOfLoadedSamples) > 0)
 	{
-		SoundDecoder_Sample* sound_sample = (SoundDecoder_Sample*)LinkedList_PopBack(s_listOfLoadedSamples);
+		SoundDecoder_Sample* sound_sample = (SoundDecoder_Sample*)LinkedList_Back(s_listOfLoadedSamples);
 		SoundDecoder_FreeSample(sound_sample);
 	}
 	LinkedList_Free(s_listOfLoadedSamples);
@@ -373,6 +375,10 @@ static int Internal_LoadSample(const SoundDecoder_DecoderFunctions *funcs,
     /* fill in the funcs for this decoder... */
     sound_sample->decoder = &funcs->info;
 	internal_sample->funcs = funcs;
+	sound_sample->flags = SOUND_SAMPLEFLAG_NONE;
+	memset(&sound_sample->actual, 0, sizeof(sound_sample->actual));
+	internal_sample->decoder_private = NULL;
+	internal_sample->total_time = -1;
 	if (!funcs->open(sound_sample, ext))
 	{
 		internal_sample->rw->seek(internal_sample->rw, current_file_position, SEEK_SET);
@@ -389,18 +395,10 @@ static int Internal_LoadSample(const SoundDecoder_DecoderFunctions *funcs,
 	 */
 
 
-	if(0 == sound_sample->desired.format)
-	{
-		sound_sample->desired.format = sound_sample->actual.format;
-	}
-	if(0 == sound_sample->desired.channels)
-	{
-		sound_sample->desired.channels = sound_sample->actual.channels;
-	}
-	if(0 == sound_sample->desired.rate)
-	{
-		sound_sample->desired.rate = sound_sample->actual.rate;
-	}
+    /* There is no generic PCM conversion in this implementation. Report the
+       format the decoder actually produces, including when it cannot honor
+       a requested format, rate or channel count. ALmixer consumes desired. */
+    sound_sample->desired = sound_sample->actual;
 
 	/* I'm a little confused at the difference between the internal
 	 * public buffer. I am going to make them the same.
@@ -410,7 +408,13 @@ static int Internal_LoadSample(const SoundDecoder_DecoderFunctions *funcs,
 	internal_sample->buffer_size = sound_sample->buffer_size;
 
 	/* Insert the new sample into the linked list of samples. */
-	LinkedList_PushBack(s_listOfLoadedSamples, sound_sample);
+	if (!LinkedList_PushBack(s_listOfLoadedSamples, sound_sample))
+	{
+		funcs->close(sound_sample);
+		internal_sample->decoder_private = NULL;
+		SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
+		return -1;
+	}
 	
 	return 1;
 }
@@ -454,10 +458,12 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
     SoundDecoder_Sample* new_sample;
     SoundDecoder_SampleInternal* internal_sample;
     SoundElement* current_decoder;
+    int load_result;
 
 	if(0 == s_isInitialized)
 	{
 		SoundDecoder_SetError(ERR_NOT_INITIALIZED);
+		if (rw_ops != NULL) rw_ops->close(rw_ops);
 		return NULL;
 	}
 	if(NULL == rw_ops)
@@ -466,10 +472,18 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
 		return NULL;
 	}
 
+	if (buffer_size == 0)
+	{
+		SoundDecoder_SetError("Buffer size must be greater than zero");
+		rw_ops->close(rw_ops);
+		return NULL;
+	}
+
 	new_sample = (SoundDecoder_Sample*)calloc(1, sizeof(SoundDecoder_Sample));
 	if(NULL == new_sample)
 	{
 		SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
+		rw_ops->close(rw_ops);
 		return NULL;
 	}
 	internal_sample = (SoundDecoder_SampleInternal*)calloc(1, sizeof(SoundDecoder_SampleInternal));
@@ -477,6 +491,7 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
 	{
 		free(new_sample);
 		SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
+		rw_ops->close(rw_ops);
 		return NULL;
 	}
 	new_sample->buffer = calloc(1, buffer_size);
@@ -485,6 +500,7 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
 		free(internal_sample);
 		free(new_sample);
 		SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
+		rw_ops->close(rw_ops);
 		return NULL;
 	}
 
@@ -497,6 +513,8 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
 
 	internal_sample->rw = rw_ops;
 	new_sample->opaque = internal_sample;
+	internal_sample->buffer = new_sample->buffer;
+	internal_sample->buffer_size = buffer_size;
 
 
     if(NULL != file_extension)
@@ -510,10 +528,11 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
                 {
                     if(0 == (SoundDecoder_strcasecmp(*decoder_file_extension, file_extension)))
                     {
-                        if(Internal_LoadSample(current_decoder->funcs, new_sample, file_extension))
+                        if ((load_result = Internal_LoadSample(current_decoder->funcs, new_sample, file_extension)) == 1)
 						{
 							return(new_sample);
 						}
+                        if (load_result < 0) goto load_failed;
                         break;  /* go to the next decoder */ 
                     }
 					decoder_file_extension++;
@@ -543,16 +562,18 @@ SoundDecoder_Sample* SoundDecoder_NewSample(ALmixer_RWops* rw_ops, const char* f
 
 			if(0 == already_tried_decoder)
 			{
-				if (Internal_LoadSample(current_decoder->funcs, new_sample, file_extension))
+				if ((load_result = Internal_LoadSample(current_decoder->funcs, new_sample, file_extension)) == 1)
 				{
 					return new_sample;
 				}
+				if (load_result < 0) goto load_failed;
 			}
 		}
 	}
 
 	/* could not find a decoder */
 	SoundDecoder_SetError(ERR_UNSUPPORTED_FORMAT);
+load_failed:
 	/* clean up the memory */
 	free(new_sample->opaque);
 	if(NULL != new_sample->buffer)
@@ -577,6 +598,7 @@ int SoundDecoder_SetBufferSize(SoundDecoder_Sample* sound_sample, size_t new_buf
     internal_sample = ((SoundDecoder_SampleInternal*)sound_sample->opaque);
 
 
+    BAIL_IF_MACRO(new_buffer_size == 0, "Buffer size must be greater than zero", 0);
     new_buffer_ptr = realloc(sound_sample->buffer, new_buffer_size);
     BAIL_IF_MACRO(NULL == new_buffer_ptr, ERR_OUT_OF_MEMORY, 0);
 
@@ -609,6 +631,12 @@ size_t SoundDecoder_Decode(SoundDecoder_Sample* sound_sample)
  	/* reset EAGAIN. Decoder can flip it back on if it needs to. */
     sound_sample->flags &= ~SOUND_SAMPLEFLAG_EAGAIN;
     bytes_read = internal_sample->funcs->read(sound_sample);
+    if (bytes_read > sound_sample->buffer_size)
+    {
+        sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+        SoundDecoder_SetError("Decoder returned more bytes than its buffer holds");
+        return 0;
+    }
     return bytes_read;
 }
 
@@ -634,21 +662,45 @@ size_t SoundDecoder_DecodeAll(SoundDecoder_Sample* sound_sample)
 	)
     {
         size_t bytes_decoded = SoundDecoder_Decode(sound_sample);
-        void* realloced_ptr = realloc(data_buffer, updated_buffer_size + bytes_decoded);
-        if(NULL == realloced_ptr)
+        void* realloced_ptr;
+        if (sound_sample->flags & SOUND_SAMPLEFLAG_ERROR)
+        {
+            free(data_buffer);
+            return 0;
+        }
+        if (bytes_decoded == 0)
+        {
+            if (sound_sample->flags & SOUND_SAMPLEFLAG_EOF) break;
+            sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+            SoundDecoder_SetError("Decoder made no progress");
+            free(data_buffer);
+            return 0;
+        }
+        if (bytes_decoded > SIZE_MAX - updated_buffer_size)
+        {
+            sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+            SoundDecoder_SetError("Decoded data size overflow");
+            free(data_buffer);
+            return 0;
+        }
+        realloced_ptr = realloc(data_buffer, updated_buffer_size + bytes_decoded);
+        if (NULL == realloced_ptr)
         {
             sound_sample->flags |= SOUND_SAMPLEFLAG_ERROR;
             SoundDecoder_SetError(ERR_OUT_OF_MEMORY);
-			if(NULL != data_buffer)
-			{
-				free(data_buffer);
-			}
-			return bytes_decoded;
+            free(data_buffer);
+            return 0;
         }
 		data_buffer = realloced_ptr;
 		/* copy the chunk of decoded PCM to the end of our new data buffer */
 		memcpy( ((char*)data_buffer) + updated_buffer_size, sound_sample->buffer, bytes_decoded );
 		updated_buffer_size += bytes_decoded;
+    }
+
+    if (updated_buffer_size == 0)
+    {
+        free(data_buffer);
+        return 0;
     }
 
     internal_sample = (SoundDecoder_SampleInternal*)sound_sample->opaque;

@@ -34,7 +34,7 @@ namespace Rtt
 			}
 			~IndexArray()
 			{
-				Rtt_DELETE( fElements );
+				Rtt_FREE( fElements );
 			}
 
 			unsigned int Length() const

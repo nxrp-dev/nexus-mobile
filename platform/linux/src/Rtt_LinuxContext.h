@@ -34,6 +34,7 @@ namespace Rtt
 {
 	class SolarApp;
 	class LinuxPlatform;
+	struct glyph_freetype_provider;
 
 	struct Config
 	{
@@ -111,6 +112,7 @@ namespace Rtt
 		std::string fPathToApp;
 		std::string fAppName;
 		LinuxPlatform* fPlatform;
+		glyph_freetype_provider* fGlyphProvider;
 		bool fTouchDeviceExist;
 		const char* fMode;
 		bool fIsDebApp;

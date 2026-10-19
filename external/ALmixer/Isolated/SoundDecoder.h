@@ -196,6 +196,10 @@ extern SOUND_DECODER_DECLSPEC void SOUND_DECODER_CALL SoundDecoder_ClearError(vo
 
 
 
+/* Consumes rw_ops, closing it on failure or when the sample is freed.
+ * Buffer sizes must be nonzero; a failed resize preserves the old buffer.
+ * Desired format is a decoder hint; returned actual/desired describe the PCM
+ * produced. This implementation does not provide generic PCM conversion. */
 extern SOUND_DECODER_DECLSPEC SoundDecoder_Sample* SOUND_DECODER_CALL SoundDecoder_NewSample(
 	struct ALmixer_RWops* rw_ops,
 	const char* ext,

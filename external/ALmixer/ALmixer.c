@@ -40,6 +40,8 @@
 
 /* For malloc, bsearch, qsort */
 #include <stdlib.h>
+#include <limits.h>
+#include <stdint.h>
 
 /* For va_list, va_start(), va_end(). */
 #include <stdarg.h>
@@ -1345,7 +1347,7 @@ fprintf(stderr, ">>>>>>>CopyData catch, albuffer=%d\n",buffer);
  */
 static ALuint GetMoreData(ALmixer_Data* data, ALuint buffer)
 {
-	ALuint bytes_decoded;
+	size_t bytes_decoded;
 	ALenum error;
 	if( ! ( data && data->sample ) )
 	{
@@ -1353,6 +1355,11 @@ static ALuint GetMoreData(ALmixer_Data* data, ALuint buffer)
 		return 0;
 	}
 
+	if (data->sample->buffer_size > INT_MAX || data->sample->desired.rate > INT_MAX)
+	{
+		ALmixer_SetError("GetMoreData: PCM buffer or sample rate exceeds OpenAL limits");
+		return 0;
+	}
 	bytes_decoded = Sound_Decode(data->sample);
 	if(data->sample->flags & SOUND_SAMPLEFLAG_ERROR)
 	{
@@ -8095,13 +8102,20 @@ ALint ALmixer_ReserveChannels(ALint num)
 
 static ALmixer_Data* DoLoad(Sound_Sample* sample, ALuint buffersize, ALboolean decode_mode_is_predecoded, ALuint max_queue_buffers, ALuint num_startup_buffers, ALuint suggested_number_of_buffers_to_queue_per_update_pass, ALuint access_data)
 {
-	ALuint bytes_decoded;
+	size_t bytes_decoded;
 	ALmixer_Data* ret_data;
 	ALenum error;
 
 	/* Validate arguments. */
 	if (!sample)
 	{
+		return NULL;
+	}
+
+	if (buffersize > INT_MAX || sample->buffer_size > INT_MAX || sample->desired.rate > INT_MAX)
+	{
+		ALmixer_SetError("DoLoad: PCM buffer or sample rate exceeds OpenAL limits");
+		Sound_FreeSample(sample);
 		return NULL;
 	}
 
@@ -8210,33 +8224,6 @@ static ALmixer_Data* DoLoad(Sound_Sample* sample, ALuint buffersize, ALboolean d
 			return NULL;
 		}
 		
-		/* Note, currently, my Ogg conservative modifications
-		 * prevent EOF from being detected in the first read
-		 * because of the weird packet behavior of ov_read().
-		 * The EAGAIN will get set, but not the EOF.
-		 * I don't know the best way to handle this,
-		 * so for now, Ogg's can only be explicitly
-		 * predecoded.
-		 */
-
-		/* Correction: Since we no longer actually keep the 
-		 * streamed data we read here (we rewind and throw
-		 * it away, and start over on Play), it is
-		 * safe to read another chunk to see if we've hit EOF
-		 */
-		if(sample->flags & SOUND_SAMPLEFLAG_EAGAIN)
-		{
-			bytes_decoded = Sound_Decode(sample);
-			if(sample->flags & SOUND_SAMPLEFLAG_ERROR)
-			{
-				ALmixer_SetError("DoLoad: Sound_Decode: %s", Sound_GetError());
-				Sound_FreeSample(sample);
-				_free(ret_data);
-				return NULL;
-			}
-		}
-
-
 		/* If we found an EOF, the entire file was 
 		 * decoded, so we can treat it like one.
 		 */
@@ -8363,7 +8350,8 @@ static ALmixer_Data* DoLoad(Sound_Sample* sample, ALuint buffersize, ALboolean d
 			 */
 			ret_data->total_bytes = 0;
 
-			ret_data->total_time = Sound_GetDuration(sample);
+			ptrdiff_t duration = Sound_GetDuration(sample);
+			ret_data->total_time = duration >= 0 && (uint64_t)duration < UINT_MAX ? (ALuint)duration : UINT_MAX;
 
 			/* Create buffers for data
 			 */
@@ -8515,11 +8503,18 @@ static ALmixer_Data* DoLoad(Sound_Sample* sample, ALuint buffersize, ALboolean d
 		 * of the buffer_size. This means we need roughly twice the memory
 		 * to load a file.
 		 */
-		ALint sound_duration = Sound_GetDuration(sample);
-		if(sound_duration > 0)
+		ptrdiff_t sound_duration = Sound_GetDuration(sample);
+		if(sound_duration > 0 && (uint64_t)sound_duration < UINT_MAX)
 		{
 			size_t total_bytes = Compute_Total_Bytes_With_Frame_Padding(&sample->desired, (ALuint)sound_duration);
-			int buffer_resize_succeeded = Sound_SetBufferSize(sample, (int) total_bytes);
+			if (total_bytes > INT_MAX)
+			{
+				ALmixer_SetError("DoLoad: decoded PCM exceeds OpenAL buffer limit");
+				Sound_FreeSample(sample);
+				_free(ret_data);
+				return NULL;
+			}
+			int buffer_resize_succeeded = Sound_SetBufferSize(sample, total_bytes);
 			if(0 == buffer_resize_succeeded)
 			{
 				ALmixer_SetError("DoLoad: Sound_SetBufferSize: %s", Sound_GetError());
@@ -8530,6 +8525,13 @@ static ALmixer_Data* DoLoad(Sound_Sample* sample, ALuint buffersize, ALboolean d
 		}
 #endif /* ALMIXER_DISABLE_PREDECODED_PRECOMPUTE_BUFFER_SIZE_OPTIMIZATION */
 		bytes_decoded = Sound_DecodeAll(sample);
+		if (bytes_decoded > INT_MAX)
+		{
+			ALmixer_SetError("DoLoad: decoded PCM exceeds OpenAL buffer limit");
+			Sound_FreeSample(sample);
+			_free(ret_data);
+			return NULL;
+		}
 		if(sample->flags & SOUND_SAMPLEFLAG_ERROR)
 		{
 			ALmixer_SetError("DoLoadL Sound_DecodeAll: %s", Sound_GetError());

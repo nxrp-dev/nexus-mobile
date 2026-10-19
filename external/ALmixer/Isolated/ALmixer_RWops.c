@@ -29,10 +29,11 @@ static size_t stdio_read(ALmixer_RWops* the_context, void* ptr, size_t size, siz
 {
 	size_t bytes_read;
 
+	if (size == 0 || nitems == 0) return 0;
 	bytes_read = fread(ptr, size, nitems, the_context->hidden.stdio.fp);
 	if(0 == bytes_read && ferror(the_context->hidden.stdio.fp))
 	{
-		/* not sure if strerror can convert ferror */
+		return ALMIXER_RWOPS_ERROR;
 /*		ALmixer_SetError("ALmixer_RWops read failed: %s", strerror(ferror(the_context->hidden.stdio.fp))); */
 	}
 	return bytes_read;
@@ -42,9 +43,11 @@ static size_t stdio_write(ALmixer_RWops* the_context, const void* ptr, size_t si
 {
 	size_t bytes_written;
 
+	if (size == 0 || nitems == 0) return 0;
 	bytes_written = fwrite(ptr, size, nitems, the_context->hidden.stdio.fp);
 	if(0 == bytes_written && ferror(the_context->hidden.stdio.fp))
 	{
+return ALMIXER_RWOPS_ERROR;
 /*		ALmixer_SetError("ALmixer_RWops write failed: %s", strerror(ferror(the_context->hidden.stdio.fp))); */
 	}
 	return bytes_written;
@@ -141,6 +144,7 @@ ALmixer_RWops* ALmixer_RWFromFile(const char* file_name, const char* file_mode)
     }
 
 	rw_ops = ALmixer_RWFromFP(file_pointer, 1);
+	if (rw_ops == NULL) fclose(file_pointer);
     return rw_ops;
 }
 

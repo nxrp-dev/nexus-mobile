@@ -312,6 +312,11 @@ namespace
 
 		// Read the requested number of bytes to the given buffer.
 		auto bytesRead = ALmixer_RWread(fRWopsPointer, pv, 1, cb);
+		if (bytesRead == ALMIXER_RWOPS_ERROR || bytesRead > cb)
+		{
+			if (pcbRead) *pcbRead = 0;
+			return E_FAIL;
+		}
 		*pcbRead = bytesRead;
 
 		// Return S_OK if we've read the exact number of requested bytes requested.
@@ -336,6 +341,11 @@ namespace
 
 		// Write the given bytes.
 		auto bytesWritten = fRWopsPointer->write(fRWopsPointer, pv, 1, cb);
+		if (bytesWritten == ALMIXER_RWOPS_ERROR || bytesWritten > cb)
+		{
+			if (pcbWritten) *pcbWritten = 0;
+			return E_FAIL;
+		}
 		if (pcbWritten)
 		{
 			*pcbWritten = bytesWritten;
@@ -346,8 +356,10 @@ namespace
 	HRESULT STDMETHODCALLTYPE RWopsStream::Seek(
 		LARGE_INTEGER dlibMove, DWORD dwOrigin, __out_opt ULARGE_INTEGER *plibNewPosition)
 	{
-		long offset = (long)(long long)dlibMove.QuadPart;
+		if (dlibMove.QuadPart < LONG_MIN || dlibMove.QuadPart > LONG_MAX) return STG_E_INVALIDFUNCTION;
+		long offset = (long)dlibMove.QuadPart;
 		auto currentPosition = ALmixer_RWseek(fRWopsPointer, offset, dwOrigin);
+		if (currentPosition >= 0 && plibNewPosition) plibNewPosition->QuadPart = currentPosition;
 		return (currentPosition >= 0) ? S_OK : STG_E_INVALIDFUNCTION;
 	}
 
@@ -542,7 +554,7 @@ namespace
 			bool fDoesOwnRWopsObject;
 			ULONG fReferenceCount;
 			long long fByteLength;
-			long fAsyncBytesRead;
+			int64_t fAsyncBytesRead;
 			std::atomic_bool fIsAsyncTaskExecuting;
 
 			#pragma endregion
@@ -688,7 +700,7 @@ namespace
 					auto streamEndPosition = ALmixer_RWseek(fRWopsPointer, 0, SEEK_END);
 					if (streamEndPosition >= 0)
 					{
-						fByteLength = streamEndPosition + 1;
+						fByteLength = streamEndPosition;
 					}
 
 					// Seek back to the previous position.
@@ -728,6 +740,7 @@ namespace
 
 	HRESULT STDMETHODCALLTYPE RWopsMFByteStream::SetCurrentPosition(QWORD qwPosition)
 	{
+		if (qwPosition > LONG_MAX) return E_INVALIDARG;
 		auto newPosition = ALmixer_RWseek(fRWopsPointer, (long)qwPosition, SEEK_SET);
 		if ((newPosition < 0) || ((QWORD)newPosition != qwPosition))
 		{
@@ -754,7 +767,7 @@ namespace
 		else
 		{
 			auto currentPosition = ALmixer_RWtell(fRWopsPointer);
-			*pfEndOfStream = (((QWORD)currentPosition + 1) >= streamLength) ? TRUE : FALSE;
+			*pfEndOfStream = ((QWORD)currentPosition >= streamLength) ? TRUE : FALSE;
 		}
 		return S_OK;
 	}
@@ -777,6 +790,11 @@ namespace
 
 		// Read the requested number of bytes to the given buffer.
 		auto bytesRead = ALmixer_RWread(fRWopsPointer, pb, 1, cb);
+		if (bytesRead == ALMIXER_RWOPS_ERROR || bytesRead > cb)
+		{
+			if (pcbRead) *pcbRead = 0;
+			return E_FAIL;
+		}
 		*pcbRead = bytesRead;
 		return S_OK;
 	}
@@ -814,7 +832,7 @@ namespace
 		result = this->Read(pb, cb, &bytesRead);
 		if (SUCCEEDED(result))
 		{
-			fAsyncBytesRead = (long)bytesRead;
+			fAsyncBytesRead = (int64_t)bytesRead;
 		}
 		else
 		{
@@ -888,6 +906,11 @@ namespace
 			bytesWritten = fRWopsPointer->write(fRWopsPointer, pb, 1, cb);
 		}
 
+		if (bytesWritten == ALMIXER_RWOPS_ERROR || bytesWritten > cb)
+		{
+			if (pcbWritten) *pcbWritten = 0;
+			return E_FAIL;
+		}
 		// Return the number of bytes written via the following mutable argument.
 		if (pcbWritten)
 		{
@@ -913,6 +936,7 @@ namespace
 	{
 		// Seek to the given position.
 		int origin = (msoBegin == SeekOrigin) ? SEEK_SET : SEEK_CUR;
+		if (llSeekOffset < LONG_MIN || llSeekOffset > LONG_MAX) return E_INVALIDARG;
 		auto currentPosition = ALmixer_RWseek(fRWopsPointer, (long)llSeekOffset, origin);
 		if (currentPosition < 0)
 		{
@@ -1000,9 +1024,9 @@ namespace
 			/// <summary>Gets the duration of the referenced audio file in milliseconds.</summary>
 			/// <returns>
 			///  <para>Returns the duration of the reference audio file in milliseconds.</para>
-			///  <para>Returns zero if the referenced audio file cannot be decoded.</para>
+			///  <para>Returns -1 if the duration is unavailable or unrepresentable.</para>
 			/// </returns>
-			virtual int GetDurationInMiliseconds() const = 0;
+			virtual ptrdiff_t GetDurationInMiliseconds() const = 0;
 
 			/// <summary>
 			///  Decodes the referenced audio file's data and copies the decoded raw PCM data to the given
@@ -1016,7 +1040,7 @@ namespace
 			///   or if given an invalid argument.
 			///  </para>
 			/// </returns>
-			virtual int ReadUsing(Sound_Sample* samplePointer) = 0;
+			virtual size_t ReadUsing(Sound_Sample* samplePointer) = 0;
 
 			/// <summary>Seeks to the given time in the audio file</summary>
 			/// <param name="samplePointer">Provides a reference to the RWops file stream. Cannot be null.</param>
@@ -1094,9 +1118,9 @@ namespace
 			/// <summary>Gets the duration of the referenced audio file in milliseconds.</summary>
 			/// <returns>
 			///  <para>Returns the duration of the reference audio file in milliseconds.</para>
-			///  <para>Returns zero if the referenced audio file cannot be decoded.</para>
+			///  <para>Returns -1 if the duration is unavailable or unrepresentable.</para>
 			/// </returns>
-			virtual int GetDurationInMiliseconds() const;
+			virtual ptrdiff_t GetDurationInMiliseconds() const;
 
 			/// <summary>
 			///  Decodes the referenced audio file's data and copies the decoded raw PCM data to the given
@@ -1110,7 +1134,7 @@ namespace
 			///   or if given an invalid argument.
 			///  </para>
 			/// </returns>
-			virtual int ReadUsing(Sound_Sample* samplePointer);
+			virtual size_t ReadUsing(Sound_Sample* samplePointer);
 
 			/// <summary>Seeks to the given time in the audio file</summary>
 			/// <param name="samplePointer">Provides a reference to the RWops file stream. Cannot be null.</param>
@@ -1434,18 +1458,17 @@ namespace
 		return info;
 	}
 
-	int AcmDecoder::GetDurationInMiliseconds() const
+	ptrdiff_t AcmDecoder::GetDurationInMiliseconds() const
 	{
-		int durationInMilliseconds = 0;
+		ptrdiff_t durationInMilliseconds = -1;
 		if (fDurationIn100NanosecondUnits > 0)
 		{
-			double fractionalMilliseconds = (double)fDurationIn100NanosecondUnits / 10000.0;
-			durationInMilliseconds = (int)(fractionalMilliseconds + 0.5);
+			durationInMilliseconds = SoundDecoder_DurationFrom100ns(fDurationIn100NanosecondUnits);
 		}
 		return durationInMilliseconds;
 	}
 
-	int AcmDecoder::ReadUsing(Sound_Sample* samplePointer)
+	size_t AcmDecoder::ReadUsing(Sound_Sample* samplePointer)
 	{
 		std::lock_guard<std::recursive_mutex> scopedMutexLock(fMutex);
 
@@ -1477,12 +1500,9 @@ namespace
 		{
 			// We've decoded too many bytes in the last call to this function.
 			// Copy this data to the ALmixer buffer now that it has room for more.
-			int outputBufferOffset = (int)fAcmStreamHeader.cbDstLengthUsed - (int)fLastDecodedBytesRemaining;
-			if (outputBufferOffset < 0)
-			{
-				outputBufferOffset = 0;
+			if (fLastDecodedBytesRemaining > fAcmStreamHeader.cbDstLengthUsed)
 				fLastDecodedBytesRemaining = fAcmStreamHeader.cbDstLengthUsed;
-			}
+			size_t outputBufferOffset = fAcmStreamHeader.cbDstLengthUsed - fLastDecodedBytesRemaining;
 			size_t bytesToCopy = fLastDecodedBytesRemaining;
 			if (bytesToCopy > sampleInternalPointer->buffer_size)
 			{
@@ -1497,6 +1517,12 @@ namespace
 		{
 			// Extract the next batch of encoded audio data from the audio file.
 			size_t bytesRead = ALmixer_RWread(sampleInternalPointer->rw, fInputBufferPointer, 1, fInputBufferSize);
+			if (bytesRead == ALMIXER_RWOPS_ERROR || bytesRead > fInputBufferSize)
+			{
+				samplePointer->flags |= SOUND_SAMPLEFLAG_ERROR;
+				break;
+			}
+			fAcmStreamHeader.cbSrcLength = (DWORD)bytesRead;
 			if (bytesRead > 0)
 			{
 				// Decode the next batch of audio data.
@@ -1513,7 +1539,7 @@ namespace
 				size_t bytesToCopy = fAcmStreamHeader.cbDstLengthUsed;
 				if (bytesToCopy > 0)
 				{
-					if ((bytesToCopy + totalBytesCopied) > sampleInternalPointer->buffer_size)
+					if (bytesToCopy > sampleInternalPointer->buffer_size - totalBytesCopied)
 					{
 						// We've decoded more bytes than can fit into the given ALmixer buffer.
 						// Store the remaining decoded bytes to be copied on the ReadUsing() call.
@@ -1540,7 +1566,7 @@ namespace
 		}
 
 		// Return the number of decoded PCM bytes copied to ALmixer's buffer.
-		return (int)totalBytesCopied;
+		return totalBytesCopied;
 	}
 
 	bool AcmDecoder::Seek(Sound_Sample* samplePointer, size_t timeInMilliseconds)
@@ -1565,10 +1591,10 @@ namespace
 		if (timeInMilliseconds <= 0)
 		{
 			// Rewind to the beginning of the audio file.
-			ALmixer_RWseek(sampleInternalPointer->rw, 0, SEEK_SET);
-			hasSucceeded = true;
+			hasSucceeded = (ALmixer_RWseek(sampleInternalPointer->rw, 0, SEEK_SET) == 0);
 		}
-		else if (timeInMilliseconds >= (size_t)this->GetDurationInMiliseconds())
+		else if (this->GetDurationInMiliseconds() >= 0 &&
+		         timeInMilliseconds >= (size_t)this->GetDurationInMiliseconds())
 		{
 			// Seek to the end of the audio file.
 			hasSucceeded = (ALmixer_RWseek(sampleInternalPointer->rw, 0, SEEK_END) >= 0);
@@ -1577,9 +1603,8 @@ namespace
 		{
 			// Decode the audio file from the beginning to find the given time via its decoded PCM data.
 			// Note: This is a very slow way to do this, but it will do for now.
-			ALmixer_RWseek(sampleInternalPointer->rw, 0, SEEK_SET);
-			size_t totalBytesRead = 0;
-			size_t bytesPerSample = fOutputFormat.wBitsPerSample / 8;
+			if (ALmixer_RWseek(sampleInternalPointer->rw, 0, SEEK_SET) != 0) return false;
+			size_t bytesPerSample = (fOutputFormat.wBitsPerSample / 8) * fOutputFormat.nChannels;
 			double totalTimeInFractionalMilliseconds = 0;
 			double timeInFractionMilliseconds = (double)timeInMilliseconds;
 			double samplesPerFractionalMillisecond = (double)fOutputFormat.nSamplesPerSec / 1000.0;
@@ -1589,6 +1614,8 @@ namespace
 				{
 					// Read the next batch of encoded bytes from the audio file.
 					size_t bytesRead = ALmixer_RWread(sampleInternalPointer->rw, fInputBufferPointer, 1, fInputBufferSize);
+					if (bytesRead == ALMIXER_RWOPS_ERROR || bytesRead > fInputBufferSize) break;
+					fAcmStreamHeader.cbSrcLength = (DWORD)bytesRead;
 					if (bytesRead > 0)
 					{
 						// Decode the read bytes.
@@ -1611,8 +1638,7 @@ namespace
 									totalTimeInFractionalMilliseconds - timeInFractionMilliseconds;
 							double scale = deltaTimeInFractionMilliseconds / timeInFractionalMillisecondsRead;
 							long seekOffset = -(long)((double)bytesRead * scale);
-							ALmixer_RWseek(sampleInternalPointer->rw, seekOffset, SEEK_CUR);
-							hasSucceeded = true;
+							hasSucceeded = (ALmixer_RWseek(sampleInternalPointer->rw, seekOffset, SEEK_CUR) >= 0);
 							break;
 						}
 					}
@@ -1688,9 +1714,9 @@ namespace
 			/// <summary>Gets the duration of the referenced audio file in milliseconds.</summary>
 			/// <returns>
 			///  <para>Returns the duration of the reference audio file in milliseconds.</para>
-			///  <para>Returns zero if the referenced audio file cannot be decoded.</para>
+			///  <para>Returns -1 if the duration is unavailable or unrepresentable.</para>
 			/// </returns>
-			virtual int GetDurationInMiliseconds() const;
+			virtual ptrdiff_t GetDurationInMiliseconds() const;
 
 			/// <summary>
 			///  Decodes the referenced audio file's data and copies the decoded raw PCM data to the given
@@ -1704,7 +1730,7 @@ namespace
 			///   or if given an invalid argument.
 			///  </para>
 			/// </returns>
-			virtual int ReadUsing(Sound_Sample* samplePointer);
+			virtual size_t ReadUsing(Sound_Sample* samplePointer);
 
 			/// <summary>Seeks to the given time in the audio file</summary>
 			/// <param name="samplePointer">Provides a reference to the RWops file stream. Cannot be null.</param>
@@ -1735,7 +1761,7 @@ namespace
 			///  <para>Returns the number of bytes copied into argument "bufferPointer".</para>
 			///  <para>Returns zero if no data was available or if given invalid arguments.</para>
 			/// </returns>
-			int CopyDecodedSamplesTo(BYTE* bufferPointer, size_t bufferSize);
+			size_t CopyDecodedSamplesTo(BYTE* bufferPointer, size_t bufferSize);
 
 
 			/// <summary>Mutex used to synchronize access between threads.</summary>
@@ -1895,9 +1921,9 @@ namespace
 		return info;
 	}
 
-	int MFDecoder::GetDurationInMiliseconds() const
+	ptrdiff_t MFDecoder::GetDurationInMiliseconds() const
 	{
-		int durationInMilliseconds = 0;
+		ptrdiff_t durationInMilliseconds = -1;
 		if (this->CanDecode() && fReaderPointer)
 		{
 			PROPVARIANT variantValue;
@@ -1909,16 +1935,15 @@ namespace
 				result = sPropVariantToInt64Callback(variantValue, &durationIn100NanosecondUnits);
 				if (SUCCEEDED(result))
 				{
-					double fractionalMilliseconds = (double)durationIn100NanosecondUnits / 10000.0;
-					durationInMilliseconds = (int)(fractionalMilliseconds + 0.5);
-					::PropVariantClear(&variantValue);
+					durationInMilliseconds = SoundDecoder_DurationFrom100ns(durationIn100NanosecondUnits);
 				}
+				::PropVariantClear(&variantValue);
 			}
 		}
 		return durationInMilliseconds;
 	}
 
-	int MFDecoder::ReadUsing(Sound_Sample* samplePointer)
+	size_t MFDecoder::ReadUsing(Sound_Sample* samplePointer)
 	{
 		std::lock_guard<std::recursive_mutex> scopedMutexLock(fMutex);
 
@@ -1945,7 +1970,7 @@ namespace
 		}
 
 		// Decode the source audio buffer to raw PCM/Wave and copy it to the given ALmixer buffer.
-		int totalBytesCopied = 0;
+		size_t totalBytesCopied = 0;
 		while ((size_t)totalBytesCopied < sampleInternalPointer->buffer_size)
 		{
 			// Decode the next batch of audio data if we do not have any remaining from the last call.
@@ -2002,6 +2027,7 @@ namespace
 		}
 
 		// Convert the given time into 100 nanosecond units and store it to a variant type.
+		if ((uint64_t)timeInMilliseconds > INT64_MAX / 10000) return false;
 		LONGLONG timeIn100NanosecondUnits = (LONGLONG)timeInMilliseconds * 10000LL;
 		PROPVARIANT variantValue;
 		HRESULT result = ::InitPropVariantFromInt64(timeIn100NanosecondUnits, &variantValue);
@@ -2012,6 +2038,7 @@ namespace
 
 		// Seek to the given point in time.
 		result = fReaderPointer->SetCurrentPosition(GUID_NULL, variantValue);
+		::PropVariantClear(&variantValue);
 		if (FAILED(result))
 		{
 			return false;
@@ -2029,7 +2056,7 @@ namespace
 		return true;
 	}
 
-	int MFDecoder::CopyDecodedSamplesTo(BYTE* bufferPointer, size_t bufferSize)
+	size_t MFDecoder::CopyDecodedSamplesTo(BYTE* bufferPointer, size_t bufferSize)
 	{
 		// Validate.
 		if (!fLastDecodedSamplePointer || !bufferPointer || (bufferSize <= 0))
@@ -2060,8 +2087,8 @@ namespace
 		}
 
 		// Copy the sample's decoded bytes to the given buffer.
-		int totalBytesCopied = 0;
-		int totalBytesIterated = 0;
+		size_t totalBytesCopied = 0;
+		size_t totalBytesIterated = 0;
 		DWORD sourceBufferCount = 0;
 		fLastDecodedSamplePointer->GetBufferCount(&sourceBufferCount);
 		for (DWORD sourceBufferIndex = 0; sourceBufferIndex < sourceBufferCount; sourceBufferIndex++)
@@ -2084,18 +2111,15 @@ namespace
 				if ((sourceBufferSize > 0) && (sourceByteStartIndex < (totalBytesIterated + sourceBufferSize)))
 				{
 					// If we have any remaining bytes to copy from the last copy, then figure out where we left off.
-					int sourceByteOffset = (int)sourceByteStartIndex - totalBytesIterated;
-					if (sourceByteOffset < 0)
-					{
-						sourceByteOffset = 0;
-					}
+					size_t sourceByteOffset = sourceByteStartIndex > totalBytesIterated ?
+						sourceByteStartIndex - totalBytesIterated : 0;
 
 					// Determine how many bytes we can copy into the given buffer.
 					size_t bytesToCopy = sourceBufferSize - sourceByteOffset;
-					if ((bytesToCopy + totalBytesCopied) > bufferSize)
+					if (bytesToCopy > bufferSize - totalBytesCopied)
 					{
 						// We've decoded more bytes than can fit in the given buffer.
-						bytesToCopy -= (bytesToCopy + (size_t)totalBytesCopied) - bufferSize;
+						bytesToCopy = bufferSize - totalBytesCopied;
 					}
 
 					// Copy the bytes.
@@ -2120,8 +2144,8 @@ namespace
 
 		// If we have not copied over all of the decoded bytes, then store the number of remaining bytes.
 		// We'll use this to copy the remaining bytes the next time this method gets called.
-		int bytesRemaining = (int)totalSourceBytes - (totalBytesCopied + (int)sourceByteStartIndex);
-		fLastDecodedBytesRemaining = (bytesRemaining > 0) ? (size_t)bytesRemaining : 0;
+		size_t bytesAvailable = totalSourceBytes - sourceByteStartIndex;
+		fLastDecodedBytesRemaining = totalBytesCopied < bytesAvailable ? bytesAvailable - totalBytesCopied : 0;
 
 		// Return the total number of decoded bytes in "fLastDecodedSamplePointer" that was copied to the given buffer.
 		return totalBytesCopied;

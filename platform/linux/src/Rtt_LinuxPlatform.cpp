@@ -553,20 +553,20 @@ namespace Rtt
 		}
 
 		// Fetch the requested preference value.
-		const char* resultPointer = "";
+		string result;
 		string localeName = "En:En";		// fixme
 		switch (category)
 		{
 		case kLocaleLanguage:
-			resultPointer = localeName.substr(0, 2).c_str();
+			result = localeName.substr(0, 2);
 			break;
 		case kLocaleCountry:
-			resultPointer = localeName.substr(3, 5).c_str();
+			result = localeName.substr(3, 5);
 			break;
 		case kLocaleIdentifier:
 		case kUILanguage:
 		{
-			resultPointer = localeName.c_str();
+			result = localeName;
 			break;
 		}
 		case kDefaultStatusBarFile:
@@ -590,7 +590,7 @@ namespace Rtt
 
 		// Copy the requested preference string to the given value.
 		// Set's value to NULL (an empty string) if the given preference is not supported.
-		value->Set(resultPointer);
+		value->Set(result.c_str());
 	}
 
 	void LinuxPlatform::SetActivityIndicator(bool visible) const

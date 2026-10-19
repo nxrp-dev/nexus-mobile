@@ -56,11 +56,12 @@ namespace Rtt
 	//	glyph provider implementation
 	//
 
-	static smart_ptr<glyph_freetype_provider> sGlyphProvider;
+	// Non-owning; the active SolarAppContext keeps the provider alive.
+	static glyph_freetype_provider* sGlyphProvider = NULL;
 
 	glyph_freetype_provider* getGlyphProvider()
 	{
-		return sGlyphProvider.get();
+		return sGlyphProvider;
 	}
 	void setGlyphProvider(glyph_freetype_provider* gp)
 	{

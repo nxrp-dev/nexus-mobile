@@ -42,6 +42,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
 
 #include "SoundDecoder.h"
 
@@ -58,9 +59,9 @@ static int OGG_init(void);
 static void OGG_quit(void);
 static int OGG_open(Sound_Sample *sample, const char *ext);
 static void OGG_close(Sound_Sample *sample);
-static uint32_t OGG_read(Sound_Sample *sample);
+static size_t OGG_read(Sound_Sample *sample);
 static int OGG_rewind(Sound_Sample *sample);
-static int OGG_seek(Sound_Sample *sample, uint32_t ms);
+static int OGG_seek(Sound_Sample *sample, size_t ms);
 
 static const char *extensions_ogg[] = { "OGG", NULL };
 const Sound_DecoderFunctions __Sound_DecoderFunctions_OGG =
@@ -102,12 +103,27 @@ static void OGG_quit(void)
 
 static size_t RWops_ogg_read(void *ptr, size_t size, size_t nmemb, void *datasource)
 {
-    return((size_t) ALmixer_RWread((ALmixer_RWops *) datasource, ptr, size, nmemb));
+    Sound_Sample *sample = (Sound_Sample *) datasource;
+    Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
+    size_t count = ALmixer_RWread(internal->rw, ptr, size, nmemb);
+    if (count == ALMIXER_RWOPS_ERROR)
+    {
+        sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+        errno = EIO;
+        SoundDecoder_SetError(ERR_IO_ERROR);
+        return 0;
+    }
+    if (count == 0) errno = 0; /* Vorbis distinguishes EOF from error via errno. */
+    return count;
 } /* RWops_ogg_read */
 
 static int RWops_ogg_seek(void *datasource, ogg_int64_t offset, int whence)
 {
-    return(ALmixer_RWseek((ALmixer_RWops *) datasource, offset, whence));
+    Sound_Sample *sample = (Sound_Sample *) datasource;
+    Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
+    if (offset < LONG_MIN || offset > LONG_MAX)
+        return -1;
+    return ALmixer_RWseek(internal->rw, (long)offset, whence) < 0 ? -1 : 0;
 } /* RWops_ogg_seek */
 
 static int RWops_ogg_close(void *datasource)
@@ -118,7 +134,9 @@ static int RWops_ogg_close(void *datasource)
 
 static long RWops_ogg_tell(void *datasource)
 {
-    return((long) ALmixer_RWtell((ALmixer_RWops *) datasource));
+    Sound_Sample *sample = (Sound_Sample *) datasource;
+    Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
+    return ALmixer_RWtell(internal->rw);
 } /* RWops_ogg_tell */
 
 static const ov_callbacks RWops_ogg_callbacks =
@@ -173,7 +191,7 @@ static __inline__ void output_ogg_comments(OggVorbis_File *vf)
 static int OGG_open(Sound_Sample *sample, const char *ext)
 {
     int rc;
-    double total_time;
+    ogg_int64_t total_time;
     OggVorbis_File *vf;
     vorbis_info *info;
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
@@ -181,7 +199,7 @@ static int OGG_open(Sound_Sample *sample, const char *ext)
     vf = (OggVorbis_File *) malloc(sizeof (OggVorbis_File));
     BAIL_IF_MACRO(vf == NULL, ERR_OUT_OF_MEMORY, 0);
 
-    rc = ov_open_callbacks(internal->rw, vf, NULL, 0, RWops_ogg_callbacks);
+    rc = ov_open_callbacks(sample, vf, NULL, 0, RWops_ogg_callbacks);
     if (rc != 0)
     {
 #if (defined DEBUG_CHATTER)		
@@ -191,8 +209,15 @@ static int OGG_open(Sound_Sample *sample, const char *ext)
         BAIL_MACRO("OGG: Not valid Ogg Vorbis data.", 0);
     } /* if */
 
+    if (sample->flags & SOUND_SAMPLEFLAG_ERROR)
+    {
+        ov_clear(vf);
+        free(vf);
+        BAIL_MACRO(ERR_IO_ERROR, 0);
+    }
     info = ov_info(vf, -1);
-    if (info == NULL)
+    if (info == NULL || info->rate <= 0 || (uint64_t)info->rate > UINT32_MAX ||
+        info->channels <= 0 || info->channels > UINT8_MAX)
     {
         ov_clear(vf);
         free(vf);
@@ -210,32 +235,18 @@ static int OGG_open(Sound_Sample *sample, const char *ext)
     SNDDBG(("OGG: total seconds of sample == (%f).\n", ov_time_total(vf, -1)));
 
     internal->decoder_private = vf;
-    sample->flags = SOUND_SAMPLEFLAG_CANSEEK;
+    sample->flags = ov_seekable(vf) ? SOUND_SAMPLEFLAG_CANSEEK : SOUND_SAMPLEFLAG_NONE;
     sample->actual.rate = (uint32_t) info->rate;
     sample->actual.channels = (uint8_t) info->channels;
     total_time = ov_time_total(vf, -1);
-    if (OV_EINVAL == total_time)
+    if (total_time < 0 || (uint64_t)total_time > PTRDIFF_MAX)
       internal->total_time = -1;
     else
-      internal->total_time = (int32_t)(total_time);
+      internal->total_time = (ptrdiff_t)total_time;
 
 
-    /*
-     * Since we might have more than one logical bitstream in the OGG file,
-     *  and these bitstreams may be in different formats, we might be
-     *  converting two or three times: once in vorbisfile, once again in
-     *  SDL_sound, and perhaps a third time to get it to the sound device's
-     *  format. That's wickedly inefficient.
-     *
-     * To combat this a little, if the user specified a desired format, we
-     *  claim that to be the "actual" format of the collection of logical
-     *  bitstreams. This means that VorbisFile will do a conversion as
-     *  necessary, and SDL_sound will not. If the user didn't specify a
-     *  desired format, then we pretend the "actual" format is something that
-     *  OGG files are apparently commonly encoded in.
-     */
-    sample->actual.format = (sample->desired.format == 0) ?
-                             AUDIO_S16SYS : sample->desired.format;
+    /* Tremor always produces native-endian signed 16-bit PCM. */
+    sample->actual.format = AUDIO_S16SYS;
     return(1);
 } /* OGG_open */
 
@@ -259,97 +270,43 @@ static void OGG_close(Sound_Sample *sample)
  * However, there may still be some corner cases where the buffer
  * cannot be entirely filled. So be aware.
  */
-static uint32_t OGG_read(Sound_Sample *sample)
+static size_t OGG_read(Sound_Sample *sample)
 {
-    int rc;
-    int bitstream;
-	Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
+    Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     OggVorbis_File *vf = (OggVorbis_File *) internal->decoder_private;
-    
-    rc = ov_read(vf, internal->buffer, internal->buffer_size,
-            &bitstream);
-
-        /* Make sure the read went smoothly... */
-    if (rc == 0)
-        sample->flags |= SOUND_SAMPLEFLAG_EOF;
-        
-    else if (rc < 0)
+    size_t total = 0;
+    size_t frame_size = sample->actual.channels * ((sample->actual.format & 0xFF) / 8);
+    int bitstream;
+    if (frame_size == 0 || internal->buffer_size < frame_size)
+    {
         sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-
-    /* If the buffer isn't filled, keep trying to fill it
-     * until no more data can be grabbed */
-    else if ((uint32_t) rc < internal->buffer_size)
-	{
-        /* Creating a pointer to the buffer that denotes where to start
-         * writing new data. */
-        uint8_t* buffer_start_point = NULL;
-        int total_bytes_read = rc;
-        int bytes_remaining = internal->buffer_size - rc;
-
-        /* Keep grabbing data until something prevents
-         * us from getting more. (Could be EOF,
-         * packets are too large to fit in remaining
-         * space, or an error.)
-         */
-        while( (rc > 0) && (bytes_remaining > 0) )
-        {
-        /* Set buffer pointer to end of last write */
-        /* All the messiness is to get rid of the warning for
-         * dereferencing a void*
-         */
-            buffer_start_point = &(((uint8_t*)internal->buffer)[total_bytes_read]);
-            rc = ov_read(vf, buffer_start_point, bytes_remaining,
-                &bitstream);
-            /* Make sure rc > 0 because we don't accidently want
-             * to change the counters if there was an error
-             */
-            if(rc > 0)
-            {
-                total_bytes_read += rc;
-                bytes_remaining = bytes_remaining - rc;
-            }
-	    }
-        /* I think the minimum read size is 2, though I'm
-         * not sure about this. (I've hit cases where I
-         * couldn't read less than 4.) What I don't want to do is
-         * accidently claim we hit EOF when the reason rc == 0
-         * is because the requested amount of data was smaller
-         * than the minimum packet size.
-         * For now, I will be conservative
-         * and not set the EOF flag, and let the next call to 
-         * this function figure it out.
-         * I think the ERROR flag is safe to set because 
-         * it looks like OGG simply returns 0 if the 
-         * read size is too small. 
-         * And in most cases for sensible buffer sizes, 
-         * this fix will fill the buffer,
-         * so we can set the EAGAIN flag without worrying
-         * that it will always be set.
-         */
-        if(rc < 0)
-	    {
-            sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-        }
-        else if(rc == 0)
-        {
-            /* Do nothing for now until there is a better solution */
-            /* sample->flags |= SOUND_SAMPLEFLAG_EOF; */
-        }
-
-        /* Test for a buffer underrun. It should occur less frequently
-         * now, but it still may happen and not necessarily mean
-         * anything useful. */
-        if ((uint32_t) total_bytes_read < internal->buffer_size)
-        {
-            sample->flags |= SOUND_SAMPLEFLAG_EAGAIN;
-        }
-        /* change rc to the total bytes read so function
-         * can return the correct value.
-         */
-        rc = total_bytes_read;
+        BAIL_MACRO("OGG: buffer smaller than a PCM frame", 0);
     }
-
-    return((uint32_t) rc);
+    while (internal->buffer_size - total >= frame_size)
+    {
+        size_t remaining = internal->buffer_size - total;
+        int request = (int)(remaining > INT_MAX ? INT_MAX : remaining);
+        long count;
+        request -= request % frame_size;
+        count = ov_read(vf, (char *)internal->buffer + total, request, &bitstream);
+        if (count < 0 || count > request)
+        {
+            sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+            SoundDecoder_SetError(ERR_IO_ERROR);
+            break;
+        }
+        total += (size_t)count;
+        if (sample->flags & SOUND_SAMPLEFLAG_ERROR) break;
+        if (count == 0)
+        {
+            sample->flags |= SOUND_SAMPLEFLAG_EOF;
+            break;
+        }
+    }
+    if (total < internal->buffer_size &&
+        !(sample->flags & (SOUND_SAMPLEFLAG_EOF | SOUND_SAMPLEFLAG_ERROR)))
+        sample->flags |= SOUND_SAMPLEFLAG_EAGAIN;
+    return total;
 } /* OGG_read */
 
 
@@ -363,11 +320,12 @@ static int OGG_rewind(Sound_Sample *sample)
 } /* OGG_rewind */
 
 
-static int OGG_seek(Sound_Sample *sample, uint32_t ms)
+static int OGG_seek(Sound_Sample *sample, size_t ms)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     OggVorbis_File *vf = (OggVorbis_File *) internal->decoder_private;
 	/* Unlike Vorbis, Tremor uses integer milliseconds instead of double seconds. */
+    BAIL_IF_MACRO((uint64_t)ms > INT64_MAX, "OGG: seek out of range", 0);
     BAIL_IF_MACRO(ov_time_seek(vf, (ogg_int64_t)ms) < 0, ERR_IO_ERROR, 0);
     return(1);
 } /* OGG_seek */

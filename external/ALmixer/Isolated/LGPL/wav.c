@@ -62,15 +62,14 @@
 #define ERR_IO_ERROR "I/O error"
 #define assert(x)
 
-extern uint32_t __Sound_convertMsToBytePos(SoundDecoder_AudioInfo*, uint32_t);
 
 static int WAV_init(void);
 static void WAV_quit(void);
 static int WAV_open(Sound_Sample *sample, const char *ext);
 static void WAV_close(Sound_Sample *sample);
-static uint32_t WAV_read(Sound_Sample *sample);
+static size_t WAV_read(Sound_Sample *sample);
 static int WAV_rewind(Sound_Sample *sample);
-static int WAV_seek(Sound_Sample *sample, uint32_t ms);
+static int WAV_seek(Sound_Sample *sample, size_t ms);
 
 static const char *extensions_wav[] = { "WAV", NULL };
 const Sound_DecoderFunctions __Sound_DecoderFunctions_WAV =
@@ -95,7 +94,7 @@ const Sound_DecoderFunctions __Sound_DecoderFunctions_WAV =
 /* Better than SDL_ReadLE16, since you can detect i/o errors... */
 static __inline__ int read_le16(ALmixer_RWops *rw, uint16_t *ui16)
 {
-    int rc = ALmixer_RWread(rw, ui16, sizeof (uint16_t), 1);
+    size_t rc = ALmixer_RWread(rw, ui16, sizeof (uint16_t), 1);
     BAIL_IF_MACRO(rc != 1, ERR_IO_ERROR, 0);
     *ui16 = SDL_SwapLE16(*ui16);
     return(1);
@@ -105,7 +104,7 @@ static __inline__ int read_le16(ALmixer_RWops *rw, uint16_t *ui16)
 /* Better than SDL_ReadLE32, since you can detect i/o errors... */
 static __inline__ int read_le32(ALmixer_RWops *rw, uint32_t *ui32)
 {
-    int rc = ALmixer_RWread(rw, ui32, sizeof (uint32_t), 1);
+    size_t rc = ALmixer_RWread(rw, ui32, sizeof (uint32_t), 1);
     BAIL_IF_MACRO(rc != 1, ERR_IO_ERROR, 0);
     *ui32 = SDL_SwapLE32(*ui32);
     return(1);
@@ -115,7 +114,7 @@ static __inline__ int read_le32(ALmixer_RWops *rw, uint32_t *ui32)
 /* This is just cleaner on the caller's end... */
 static __inline__ int read_uint8_t(ALmixer_RWops *rw, uint8_t *ui8)
 {
-    int rc = ALmixer_RWread(rw, ui8, sizeof (uint8_t), 1);
+    size_t rc = ALmixer_RWread(rw, ui8, sizeof (uint8_t), 1);
     BAIL_IF_MACRO(rc != 1, ERR_IO_ERROR, 0);
     return(1);
 } /* read_uint8_t */
@@ -179,16 +178,16 @@ typedef struct S_WAV_FMT_T
     uint16_t wBlockAlign;
     uint16_t wBitsPerSample;
 
-    uint32_t next_chunk_offset;
+    long next_chunk_offset;
 
     uint32_t sample_frame_size;
-    uint32_t data_starting_offset;
+    long data_starting_offset;
     uint32_t total_bytes;
 
     void (*free)(struct S_WAV_FMT_T *fmt);
-    uint32_t (*read_sample)(Sound_Sample *sample);
+    size_t (*read_sample)(Sound_Sample *sample);
     int (*rewind_sample)(Sound_Sample *sample);
-    int (*seek_sample)(Sound_Sample *sample, uint32_t ms);
+    int (*seek_sample)(Sound_Sample *sample, size_t ms);
 
     union
     {
@@ -222,7 +221,10 @@ static int read_fmt_chunk(ALmixer_RWops *rw, fmt_t *fmt)
 
     BAIL_IF_MACRO(!read_le32(rw, (uint32_t*)&fmt->chunkSize), NULL, 0);
     BAIL_IF_MACRO(fmt->chunkSize < 16, "WAV: Invalid chunk size", 0);
-    fmt->next_chunk_offset = ALmixer_RWtell(rw) + fmt->chunkSize;
+    long position = ALmixer_RWtell(rw);
+    uint64_t span = (uint64_t)fmt->chunkSize + (fmt->chunkSize & 1);
+    BAIL_IF_MACRO(position < 0 || span > (uint64_t)(LONG_MAX - position), ERR_IO_ERROR, 0);
+    fmt->next_chunk_offset = position + (long)span;
 
     BAIL_IF_MACRO(!read_le16(rw, (uint16_t*)&fmt->wFormatTag), NULL, 0);
     BAIL_IF_MACRO(!read_le16(rw, &fmt->wChannels), NULL, 0);
@@ -277,7 +279,7 @@ static int read_data_chunk(ALmixer_RWops *rw, data_t *data)
 typedef struct
 {
     fmt_t *fmt;
-    int32_t bytesLeft;
+    uint32_t bytesLeft;
 } wav_t;
 
 
@@ -290,50 +292,47 @@ typedef struct
 /*
  * Sound_Decode() lands here for uncompressed WAVs...
  */
-static uint32_t read_sample_fmt_normal(Sound_Sample *sample)
+static size_t read_sample_fmt_normal(Sound_Sample *sample)
 {
-    uint32_t retval;
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;
-    uint32_t max = (internal->buffer_size < (uint32_t) w->bytesLeft) ?
-                    internal->buffer_size : (uint32_t) w->bytesLeft;
-
-    assert(max > 0);
-
-        /*
-         * We don't actually do any decoding, so we read the wav data
-         *  directly into the internal buffer...
-         */
-    retval = ALmixer_RWread(internal->rw, internal->buffer, 1, max);
-
-    w->bytesLeft -= retval;
-
-        /* Make sure the read went smoothly... */
-    if ((retval == 0) || (w->bytesLeft == 0))
+    size_t maximum = internal->buffer_size < w->bytesLeft ? internal->buffer_size : w->bytesLeft;
+    size_t count;
+    if (maximum == 0)
+    {
         sample->flags |= SOUND_SAMPLEFLAG_EOF;
-
-    else if (retval == -1)
+        return 0;
+    }
+    count = ALmixer_RWread(internal->rw, internal->buffer, 1, maximum);
+    if (count == ALMIXER_RWOPS_ERROR || count > maximum || count == 0)
+    {
         sample->flags |= SOUND_SAMPLEFLAG_ERROR;
-
-        /* (next call this EAGAIN may turn into an EOF or error.) */
-    else if (retval < internal->buffer_size)
+        BAIL_MACRO("WAV: incomplete or unreadable data chunk", 0);
+    }
+    w->bytesLeft -= (uint32_t)count;
+    if (w->bytesLeft == 0)
+        sample->flags |= SOUND_SAMPLEFLAG_EOF;
+    else if (count < internal->buffer_size)
         sample->flags |= SOUND_SAMPLEFLAG_EAGAIN;
-
-    return(retval);
+    return count;
 } /* read_sample_fmt_normal */
 
 
-static int seek_sample_fmt_normal(Sound_Sample *sample, uint32_t ms)
+static int seek_sample_fmt_normal(Sound_Sample *sample, size_t ms)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;
     fmt_t *fmt = w->fmt;
-    int offset = __Sound_convertMsToBytePos(&sample->actual, ms);
-    int pos = (int) (fmt->data_starting_offset + offset);
-    int rc = ALmixer_RWseek(internal->rw, pos, SEEK_SET);
-    BAIL_IF_MACRO(rc != pos, ERR_IO_ERROR, 0);
-    w->bytesLeft = fmt->total_bytes - offset;
-    return(1);  /* success. */
+    uint64_t frame, offset;
+    long position;
+    BAIL_IF_MACRO(!SoundDecoder_MillisecondsToFrames(ms, sample->actual.rate,
+                  fmt->total_bytes / fmt->sample_frame_size, &frame), "WAV: seek out of range", 0);
+    offset = frame * fmt->sample_frame_size;
+    BAIL_IF_MACRO(offset > (uint64_t)(LONG_MAX - fmt->data_starting_offset), "WAV: seek out of range", 0);
+    position = fmt->data_starting_offset + (long)offset;
+    BAIL_IF_MACRO(ALmixer_RWseek(internal->rw, position, SEEK_SET) != position, ERR_IO_ERROR, 0);
+    w->bytesLeft = fmt->total_bytes - (uint32_t)offset;
+    return 1;
 } /* seek_sample_fmt_normal */
 
 
@@ -384,7 +383,11 @@ static __inline__ int read_adpcm_block_headers(Sound_Sample *sample)
     w->bytesLeft -= fmt->wBlockAlign;
 
     for (i = 0; i < max; i++)
+    {
         BAIL_IF_MACRO(!read_uint8_t(rw, &headers[i].bPredictor), NULL, 0);
+        BAIL_IF_MACRO(headers[i].bPredictor >= fmt->fmt.adpcm.wNumCoef,
+                      "WAV: invalid ADPCM predictor", 0);
+    }
 
     for (i = 0; i < max; i++)
         BAIL_IF_MACRO(!read_le16(rw, &headers[i].iDelta), NULL, 0);
@@ -499,14 +502,19 @@ static __inline__ void put_adpcm_sample_frame2(void *_buf, fmt_t *fmt)
 /*
  * Sound_Decode() lands here for ADPCM-encoded WAVs...
  */
-static uint32_t read_sample_fmt_adpcm(Sound_Sample *sample)
+static size_t read_sample_fmt_adpcm(Sound_Sample *sample)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;
     fmt_t *fmt = w->fmt;
-    uint32_t bw = 0;
+    size_t bw = 0;
 
-    while (bw < internal->buffer_size)
+    if (internal->buffer_size < fmt->sample_frame_size)
+    {
+        sample->flags |= SOUND_SAMPLEFLAG_ERROR;
+        BAIL_MACRO("WAV: buffer smaller than a PCM frame", 0);
+    }
+    while (internal->buffer_size - bw >= fmt->sample_frame_size)
     {
         /* write ongoing sample frame before reading more data... */
         switch (fmt->fmt.adpcm.samples_left_in_block)
@@ -570,47 +578,34 @@ static int rewind_sample_fmt_adpcm(Sound_Sample *sample)
 } /* rewind_sample_fmt_adpcm */
 
 
-static int seek_sample_fmt_adpcm(Sound_Sample *sample, uint32_t ms)
+static int seek_sample_fmt_adpcm(Sound_Sample *sample, size_t ms)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;
     fmt_t *fmt = w->fmt;
-    uint32_t origsampsleft = fmt->fmt.adpcm.samples_left_in_block;
-    int origpos = ALmixer_RWtell(internal->rw);
-    int offset = __Sound_convertMsToBytePos(&sample->actual, ms);
-    int bpb = (fmt->fmt.adpcm.wSamplesPerBlock * fmt->sample_frame_size);
-    int skipsize = (offset / bpb) * fmt->wBlockAlign;
-    int pos = skipsize + fmt->data_starting_offset;
-    int rc = ALmixer_RWseek(internal->rw, pos, SEEK_SET);
-    BAIL_IF_MACRO(rc != pos, ERR_IO_ERROR, 0);
-
-    /* The offset we need is in this block, so we need to decode to there. */
-    skipsize += (offset % bpb);
-    rc = (offset % bpb);  /* bytes into this block we need to decode */
-    if (!read_adpcm_block_headers(sample))
-    {
-        ALmixer_RWseek(internal->rw, origpos, SEEK_SET);  /* try to make sane. */
-        return(0);
-    } /* if */
-
-    /* first sample frame of block is a freebie. :) */
+    uint64_t frame, block, offset, within;
+    uint64_t frames = ((uint64_t)fmt->total_bytes / fmt->wBlockAlign) * fmt->fmt.adpcm.wSamplesPerBlock;
+    long position;
+    BAIL_IF_MACRO(!SoundDecoder_MillisecondsToFrames(ms, sample->actual.rate, frames, &frame),
+                  "WAV: seek out of range", 0);
+    block = frame / fmt->fmt.adpcm.wSamplesPerBlock;
+    within = frame % fmt->fmt.adpcm.wSamplesPerBlock;
+    offset = block * fmt->wBlockAlign;
+    BAIL_IF_MACRO(offset > (uint64_t)(LONG_MAX - fmt->data_starting_offset), "WAV: seek out of range", 0);
+    position = fmt->data_starting_offset + (long)offset;
+    BAIL_IF_MACRO(ALmixer_RWseek(internal->rw, position, SEEK_SET) != position, ERR_IO_ERROR, 0);
+    w->bytesLeft = fmt->total_bytes - (uint32_t)offset;
+    fmt->fmt.adpcm.samples_left_in_block = 0;
+    if (within == 0) return 1;
+    BAIL_IF_MACRO(!read_adpcm_block_headers(sample), ERR_IO_ERROR, 0);
+    /* The first frame is stored as iSamp2; subsequent frames use iSamp1. */
     fmt->fmt.adpcm.samples_left_in_block--;
-    rc -= fmt->sample_frame_size;
-    while (rc > 0)
+    while (--within > 0)
     {
-        if (!decode_adpcm_sample_frame(sample))
-        {
-            ALmixer_RWseek(internal->rw, origpos, SEEK_SET);
-            fmt->fmt.adpcm.samples_left_in_block = origsampsleft;
-            return(0);
-        } /* if */
-
+        BAIL_IF_MACRO(!decode_adpcm_sample_frame(sample), ERR_IO_ERROR, 0);
         fmt->fmt.adpcm.samples_left_in_block--;
-        rc -= fmt->sample_frame_size;
-    } /* while */
-
-    w->bytesLeft = fmt->total_bytes - skipsize;
-    return(1);  /* success. */
+    }
+    return 1;
 } /* seek_sample_fmt_adpcm */
 
 
@@ -632,6 +627,11 @@ static int read_fmt_adpcm(ALmixer_RWops *rw, fmt_t *fmt)
     BAIL_IF_MACRO(!read_le16(rw, &fmt->fmt.adpcm.cbSize), NULL, 0);
     BAIL_IF_MACRO(!read_le16(rw, &fmt->fmt.adpcm.wSamplesPerBlock), NULL, 0);
     BAIL_IF_MACRO(!read_le16(rw, &fmt->fmt.adpcm.wNumCoef), NULL, 0);
+
+    BAIL_IF_MACRO(fmt->fmt.adpcm.wSamplesPerBlock < 2 || fmt->fmt.adpcm.wNumCoef == 0 ||
+        fmt->wBlockAlign != 7 * fmt->wChannels +
+        (((uint32_t)fmt->fmt.adpcm.wSamplesPerBlock - 2) * fmt->wChannels + 1) / 2,
+        "WAV: invalid ADPCM block format", 0);
 
     /* fmt->free() is always called, so these malloc()s will be cleaned up. */
 
@@ -707,7 +707,8 @@ static int find_chunk(ALmixer_RWops *rw, uint32_t id)
 {
     uint32_t siz = 0;
     uint32_t _id = 0;
-    uint32_t pos = ALmixer_RWtell(rw);
+    long pos = ALmixer_RWtell(rw);
+    BAIL_IF_MACRO(pos < 0, ERR_IO_ERROR, 0);
 
     while (1)
     {
@@ -717,8 +718,9 @@ static int find_chunk(ALmixer_RWops *rw, uint32_t id)
 
             /* skip ahead and see what next chunk is... */
         BAIL_IF_MACRO(!read_le32(rw, &siz), NULL, 0);
-        assert(siz >= 0);
-        pos += (sizeof (uint32_t) * 2) + siz;
+        uint64_t span = 8 + (uint64_t)siz + (siz & 1);
+        BAIL_IF_MACRO(span > (uint64_t)(LONG_MAX - pos), ERR_IO_ERROR, 0);
+        pos += (long)span;
         if (siz > 0)
             BAIL_IF_MACRO(ALmixer_RWseek(rw, pos, SEEK_SET) != pos, NULL, 0);
     } /* while */
@@ -740,6 +742,9 @@ static int WAV_open_internal(Sound_Sample *sample, const char *ext, fmt_t *fmt)
     BAIL_IF_MACRO(!find_chunk(rw, fmtID), "WAV: No format chunk.", 0);
     BAIL_IF_MACRO(!read_fmt_chunk(rw, fmt), "WAV: Can't read format chunk.", 0);
 
+    BAIL_IF_MACRO(fmt->wChannels == 0 || fmt->wChannels > UINT8_MAX ||
+                  fmt->dwSamplesPerSec == 0 || fmt->dwAvgBytesPerSec == 0 || fmt->wBlockAlign == 0,
+                  "WAV: invalid audio format", 0);
     sample->actual.channels = (uint8_t) fmt->wChannels;
     sample->actual.rate = fmt->dwSamplesPerSec;
     if ((fmt->wBitsPerSample == 4) /*|| (fmt->wBitsPerSample == 0) */ )
@@ -759,22 +764,22 @@ static int WAV_open_internal(Sound_Sample *sample, const char *ext, fmt_t *fmt)
     } /* else */
 
     BAIL_IF_MACRO(!read_fmt(rw, fmt), NULL, 0);
-    ALmixer_RWseek(rw, fmt->next_chunk_offset, SEEK_SET);
+    BAIL_IF_MACRO(ALmixer_RWseek(rw, fmt->next_chunk_offset, SEEK_SET) != fmt->next_chunk_offset, ERR_IO_ERROR, 0);
     BAIL_IF_MACRO(!find_chunk(rw, dataID), "WAV: No data chunk.", 0);
     BAIL_IF_MACRO(!read_data_chunk(rw, &d), "WAV: Can't read data chunk.", 0);
 
+    fmt->data_starting_offset = ALmixer_RWtell(rw);
+    BAIL_IF_MACRO(fmt->data_starting_offset < 0, ERR_IO_ERROR, 0);
     w = (wav_t *) malloc(sizeof(wav_t));
     BAIL_IF_MACRO(w == NULL, ERR_OUT_OF_MEMORY, 0);
     w->fmt = fmt;
     fmt->total_bytes = w->bytesLeft = d.chunkSize;
-    fmt->data_starting_offset = ALmixer_RWtell(rw);
     fmt->sample_frame_size = ( ((sample->actual.format & 0xFF) / 8) *
                                sample->actual.channels );
     internal->decoder_private = (void *) w;
 
-    internal->total_time = (fmt->total_bytes / fmt->dwAvgBytesPerSec) * 1000;
-    internal->total_time += (fmt->total_bytes % fmt->dwAvgBytesPerSec)
-                              *  1000 / fmt->dwAvgBytesPerSec;
+    uint64_t duration = ((uint64_t)fmt->total_bytes * 1000) / fmt->dwAvgBytesPerSec;
+    internal->total_time = duration <= PTRDIFF_MAX ? (ptrdiff_t)duration : -1;
 
     sample->flags = SOUND_SAMPLEFLAG_NONE;
     if (fmt->seek_sample != NULL)
@@ -818,7 +823,7 @@ static void WAV_close(Sound_Sample *sample)
 } /* WAV_close */
 
 
-static uint32_t WAV_read(Sound_Sample *sample)
+static size_t WAV_read(Sound_Sample *sample)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;
@@ -831,14 +836,14 @@ static int WAV_rewind(Sound_Sample *sample)
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;
     fmt_t *fmt = w->fmt;
-    int rc = ALmixer_RWseek(internal->rw, fmt->data_starting_offset, SEEK_SET);
+    long rc = ALmixer_RWseek(internal->rw, fmt->data_starting_offset, SEEK_SET);
     BAIL_IF_MACRO(rc != fmt->data_starting_offset, ERR_IO_ERROR, 0);
     w->bytesLeft = fmt->total_bytes;
     return(fmt->rewind_sample(sample));
 } /* WAV_rewind */
 
 
-static int WAV_seek(Sound_Sample *sample, uint32_t ms)
+static int WAV_seek(Sound_Sample *sample, size_t ms)
 {
     Sound_SampleInternal *internal = (Sound_SampleInternal *) sample->opaque;
     wav_t *w = (wav_t *) internal->decoder_private;

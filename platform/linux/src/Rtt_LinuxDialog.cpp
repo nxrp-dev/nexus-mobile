@@ -147,8 +147,30 @@ namespace Rtt
 
 	Window::~Window()
 	{
+		// Preserve any surviving window's contexts while releasing our own backends.
+		window = SDL_GL_GetCurrentWindow();
+		glcontext = SDL_GL_GetCurrentContext();
+		imctx = ImGui::GetCurrentContext();
+		if (glcontext == fGLcontext)
+		{
+			window = NULL;
+			glcontext = NULL;
+		}
+		if (imctx == fImCtx)
+		{
+			imctx = NULL;
+		}
+
+		SDL_GL_MakeCurrent(fWindow, fGLcontext);
+		ImGui::SetCurrentContext(fImCtx);
+		ImGui_ImplOpenGL3_Shutdown();
+		ImGui_ImplSDL2_Shutdown();
 		ImGui::DestroyContext(fImCtx);
+		SDL_GL_DeleteContext(fGLcontext);
 		SDL_DestroyWindow(fWindow);
+
+		SDL_GL_MakeCurrent(window, glcontext);
+		ImGui::SetCurrentContext(imctx);
 	}
 
 	// Setup Dear ImGui style

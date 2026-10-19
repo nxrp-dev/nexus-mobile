@@ -39,6 +39,7 @@ extern "C" {
 	 * It appears that Visual Studio 2010 finally includes this.
 	 */
 	#include <stdint.h>
+	#define ALMIXER_RWOPS_ERROR ((size_t)-1)
 	typedef struct ALmixer_RWops 
 	{
 		/** Seek to 'offset' relative to whence, one of stdio's whence values:
@@ -50,13 +51,15 @@ extern "C" {
 
 		/** Read up to 'nitems' objects each of size 'size' from the data
 		 *  source to the area pointed at by 'ptr'.
-		 *  Returns the number of objects read, or -1 if the read failed.
+		 *  Returns completed objects, or ALMIXER_RWOPS_ERROR on error with no
+		 *  completed objects. Zero means EOF (or a zero-sized request).
 		 */
 		size_t (ALMIXER_RWOPS_CALL *read)(struct ALmixer_RWops* the_context, void* ptr, size_t size, size_t nitems);
 
 		/** Write exactly 'nitems' objects each of size 'size' from the area
 		 *  pointed at by 'ptr' to data source.
-		 *  Returns 'num', or -1 if the write failed.
+		 *  Returns completed objects, or ALMIXER_RWOPS_ERROR on error with no
+		 *  completed objects.
 		 */
 		size_t (ALMIXER_RWOPS_CALL *write)(struct ALmixer_RWops* the_context, const void* ptr, size_t size, size_t nitems);
 

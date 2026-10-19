@@ -63,13 +63,19 @@ namespace Rtt
 
 	SolarApp::~SolarApp()
 	{
+		SDL_GL_MakeCurrent(fWindow, fGLcontext);
+		ImGui::SetCurrentContext(fImCtx);
+
+		// Dialogs can call the runtime on destruction; keep the console for its final logs.
+		fDlg = NULL;
 		fContext = NULL;
+		fConsole = NULL;
 		curl_global_cleanup();
 
 		// Cleanup
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplSDL2_Shutdown();
-		ImGui::DestroyContext();
+		ImGui::DestroyContext(fImCtx);
 
 		SDL_GL_DeleteContext(fGLcontext);
 		SDL_DestroyWindow(fWindow);
