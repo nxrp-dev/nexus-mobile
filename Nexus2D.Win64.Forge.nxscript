@@ -1,6 +1,6 @@
 dialect "../nexus/projects/forge/language/Forge.nxscript";
 
-// Tool paths below match the current C:\gitdev installation. Git, Python 3,
+// Tool paths below match the current C:\gitdev installation. Git, CMake, Ninja, Python 3,
 // the v142 C++ toolset, and Windows SDK 10.0.19041.0 are also required.
 // This builds the existing Release|x64 simulator configuration. Nexus2D's
 // Win32 and x64 configurations still share platform/windows/Bin/Corona.
@@ -8,9 +8,7 @@ PowerShell BuildDependencies {
     Template: "../nexus/projects/forge/templates/PowerShell.mustache";
     EntryPoint: "platform/windows/Build.Tools/Build-X64Dependencies.ps1";
     Arguments: [
-        "-CMakePath", "../tools/solar2d-win64-deps/strawberry-perl-5.42.3.1/c/bin/cmake.exe",
-        "-NinjaPath", "../tools/solar2d-win64-deps/strawberry-perl-5.42.3.1/c/bin/ninja.exe",
-        "-PerlPath", "../tools/solar2d-win64-deps/strawberry-perl-5.42.3.1/perl/bin/perl.exe"
+        "-OpenSSLRoot", "../../toolchain/openssl/x86_64-win64"
     ];
 }
 

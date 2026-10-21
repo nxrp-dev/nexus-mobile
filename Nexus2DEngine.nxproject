@@ -5,9 +5,11 @@
 // were reviewed against platform/linux/CMakeList.txt; no external build generator runs.
 dialect "../nexus/projects/nxbuild/language/nxbuild.Language.nxscript";
 module "../nexus/projects/nxbuild/nxbuild.environment.nxscript";
+module Projects "../nexus/projects/nxbuild/Projects.nxscript";
 
 Project Nexus2DEngine TargetOS[linux] {
     Id: "NXRP.Nexus2D.Engine";
+    Requires: [@Projects.OpenSSLNative];
     RootDirectory: "../nexus";
     SourceRoot: "../nexus-mobile";
     OutputRoot: @Tools.OutputRoot + "/nexus2d/" + @Tools.Native.Name + "/" + $BuildConfiguration;

@@ -2,7 +2,7 @@ param(
     [string]$CacheRoot,
     [string]$CMakePath,
     [string]$NinjaPath,
-    [string]$PerlPath,
+    [string]$OpenSSLRoot,
     [int]$Jobs = 8
 )
 
@@ -12,6 +12,15 @@ if (-not $CacheRoot) {
     $CacheRoot = Join-Path $repoRoot '.build\win64-deps'
 }
 $CacheRoot = [System.IO.Path]::GetFullPath($CacheRoot)
+if (-not $OpenSSLRoot) {
+    $OpenSSLRoot = Join-Path $repoRoot '..\..\toolchain\openssl\x86_64-win64'
+}
+$OpenSSLRoot = [System.IO.Path]::GetFullPath($OpenSSLRoot)
+foreach ($required in @('include\openssl\opensslv.h', 'lib\libcrypto.lib', 'lib\libssl.lib')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $OpenSSLRoot $required) -PathType Leaf)) {
+        throw "Missing prebuilt OpenSSL 3 file: $OpenSSLRoot\$required. Install the developer package using network/openssl/README.md."
+    }
+}
 
 function Find-Tool {
     param([string]$Name, [string]$Path)
@@ -73,7 +82,6 @@ if ($Jobs -lt 1) { throw 'Jobs must be at least 1.' }
 $git = (Get-Command git -ErrorAction Stop).Source
 $cmake = Find-Tool 'cmake.exe' $CMakePath
 $ninja = Find-Tool 'ninja.exe' $NinjaPath
-$perl = Find-Tool 'perl.exe' $PerlPath
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio vswhere.exe is required.' }
 $vsRoot = (& $vswhere -latest -products '*' -property installationPath | Select-Object -First 1)
@@ -84,15 +92,14 @@ if (-not $vc) { throw 'The Visual C++ v142 (14.29) toolset is required.' }
 $vcBin = Join-Path $vc.FullName 'bin\Hostx64\x64'
 $cl = Join-Path $vcBin 'cl.exe'
 $libTool = Join-Path $vcBin 'lib.exe'
-$nmake = Join-Path $vcBin 'nmake.exe'
 $msbuild = Join-Path $vsRoot 'MSBuild\Current\Bin\amd64\MSBuild.exe'
 $sdkRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -Name KitsRoot10).KitsRoot10
 $sdkVersion = '10.0.19041.0'
 $sdkBin = Join-Path $sdkRoot "bin\$sdkVersion\x64"
-foreach ($required in @($cl, $libTool, $nmake, $msbuild, (Join-Path $sdkBin 'rc.exe'))) {
+foreach ($required in @($cl, $libTool, $msbuild, (Join-Path $sdkBin 'rc.exe'))) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing build tool: $required" }
 }
-$env:PATH = "$vcBin;$sdkBin;$(Split-Path $ninja);$(Split-Path $perl);$env:PATH"
+$env:PATH = "$vcBin;$sdkBin;$(Split-Path $ninja);$env:PATH"
 $env:INCLUDE = "$(Join-Path $vc.FullName 'include');$(Join-Path $sdkRoot "Include\$sdkVersion\ucrt");$(Join-Path $sdkRoot "Include\$sdkVersion\um");$(Join-Path $sdkRoot "Include\$sdkVersion\shared")"
 $env:LIB = "$(Join-Path $vc.FullName 'lib\x64');$(Join-Path $sdkRoot "Lib\$sdkVersion\ucrt\x64");$(Join-Path $sdkRoot "Lib\$sdkVersion\um\x64")"
 New-Item -ItemType Directory -Path $CacheRoot -Force | Out-Null
@@ -104,7 +111,6 @@ $null = Get-PinnedSource 'shaderc\third_party\glslang' 'https://github.com/Khron
 $null = Get-PinnedSource 'shaderc\third_party\spirv-headers' 'https://github.com/KhronosGroup/SPIRV-Headers.git' 'a3fdfe81465d57efc97cfd28ac6c8190fb31a6c8'
 $null = Get-PinnedSource 'shaderc\third_party\spirv-tools' 'https://github.com/KhronosGroup/SPIRV-Tools.git' 'ef3290bbea35935ba8fd623970511ed9f045bbd7'
 $spirvCross = Get-PinnedSource 'spirv-cross' 'https://github.com/KhronosGroup/SPIRV-Cross.git' 'cf1e9e0643eba07535f0015e68fd95bfe3cf1e73'
-$openssl = Get-PinnedSource 'openssl' 'https://github.com/openssl/openssl.git' '45e844fa2a14ec92d146bd8f5778ac130b6625fb'
 $libevent = Get-PinnedSource 'libevent' 'https://github.com/libevent/libevent.git' '79ddfb460847999b807cba76d04e73891f29c6ee'
 $mdns = Get-PinnedSource 'mdnsresponder' 'https://github.com/apple-oss-distributions/mDNSResponder.git' 'f783506af3836b39b83fc14115bc2728a49db4b2'
 
@@ -132,22 +138,16 @@ Invoke-Checked $cmake @('-S', $spirvCross, '-B', $spirvBuild, '-G', 'Ninja',
     '-DSPIRV_CROSS_ENABLE_UTIL=OFF') $CacheRoot
 Invoke-Checked $cmake @('--build', $spirvBuild, '--target', 'spirv-cross-core', 'spirv-cross-glsl', '--parallel', "$Jobs") $CacheRoot
 
-if (-not (Test-Path -LiteralPath (Join-Path $openssl 'makefile'))) {
-    Invoke-Checked $perl @('Configure', 'VC-WIN64A', 'no-shared', 'no-asm', 'no-tests',
-        "--prefix=$(Join-Path $CacheRoot 'openssl-install')") $openssl
-}
-Invoke-Checked $nmake @('/NOLOGO', '/S', 'build_libs') $openssl
-
 $eventBuild = Join-Path $CacheRoot 'libevent-build'
 Invoke-Checked $cmake @('-S', $libevent, '-B', $eventBuild, '-G', 'Ninja',
     '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_POLICY_VERSION_MINIMUM=3.5',
     "-DCMAKE_C_COMPILER=$cl", "-DCMAKE_MAKE_PROGRAM=$ninja",
     '-DEVENT__LIBRARY_TYPE=STATIC', '-DEVENT__MSVC_STATIC_RUNTIME=ON',
     '-DEVENT__DISABLE_TESTS=ON', '-DEVENT__DISABLE_BENCHMARK=ON',
-    '-DEVENT__DISABLE_SAMPLES=ON', "-DOPENSSL_ROOT_DIR=$openssl",
-    "-DOPENSSL_INCLUDE_DIR=$(Join-Path $openssl 'include')",
-    "-DOPENSSL_CRYPTO_LIBRARY=$(Join-Path $openssl 'libcrypto.lib')",
-    "-DOPENSSL_SSL_LIBRARY=$(Join-Path $openssl 'libssl.lib')") $CacheRoot
+    '-DEVENT__DISABLE_SAMPLES=ON', "-DOPENSSL_ROOT_DIR=$OpenSSLRoot",
+    "-DOPENSSL_INCLUDE_DIR=$(Join-Path $OpenSSLRoot 'include')",
+    "-DOPENSSL_CRYPTO_LIBRARY=$(Join-Path $OpenSSLRoot 'lib\libcrypto.lib')",
+    "-DOPENSSL_SSL_LIBRARY=$(Join-Path $OpenSSLRoot 'lib\libssl.lib')") $CacheRoot
 Invoke-Checked $cmake @('--build', $eventBuild, '--parallel', "$Jobs") $CacheRoot
 
 $dnsBuild = Join-Path $CacheRoot 'dnssd-build'
@@ -171,13 +171,13 @@ foreach ($name in @('spirv-cross-core.lib', 'spirv-cross-glsl.lib')) {
     Copy-RequiredFile (Join-Path $spirvBuild $name) (Join-Path $vulkanLib $name)
 }
 foreach ($name in @('libcrypto.lib', 'libssl.lib')) {
-    Copy-RequiredFile (Join-Path $openssl $name) (Join-Path $liveLib $name)
+    Copy-RequiredFile (Join-Path $OpenSSLRoot "lib\$name") (Join-Path $liveLib $name)
 }
 foreach ($name in @('event_core.lib', 'event_extra.lib', 'event_openssl.lib')) {
     Copy-RequiredFile (Join-Path $eventBuild "lib\$name") (Join-Path $liveLib $name)
 }
 Copy-RequiredFile $dnsLibrary (Join-Path $liveLib 'dnssd.lib')
-Copy-Item (Join-Path $openssl 'include\openssl\*') (Join-Path $liveInclude 'openssl') -Recurse -Force
+Copy-Item (Join-Path $OpenSSLRoot 'include\openssl\*') (Join-Path $liveInclude 'openssl') -Recurse -Force
 Copy-Item (Join-Path $libevent 'include\event2\*') (Join-Path $liveInclude 'event2') -Recurse -Force
 Copy-RequiredFile (Join-Path $eventBuild 'include\event2\event-config.h') (Join-Path $liveInclude 'event2\event-config.h')
 Copy-RequiredFile (Join-Path $mdns 'mDNSShared\dns_sd.h') (Join-Path $liveInclude 'dns_sd.h')
